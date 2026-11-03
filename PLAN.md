@@ -62,6 +62,32 @@ piece, and it is deliberately thin:
 No bot inventory is scraped, no bot files are read, and no bot code is
 bundled.
 
+## The loop: trade window in, prices out
+
+The stock source is **the open trade window** — no bot cooperation needed
+to see what a bot is selling:
+
+1. The player trades the bot. `Event::Trade(Opened)` arrives; while the
+   trade is open, `Host::trade().partner_items` lists the object ids of
+   everything the bot offered.
+2. **Scan**: the plugin queues an appraisal (`Host::identify(id)`) for
+   each partner item it has not appraised before, one per tick, and folds
+   the answers into `ItemFacts` keyed by property id. Items already cached
+   from an earlier visit skip appraisal entirely — the list opens full,
+   only new lines show "awaiting appraisal".
+3. Each sighted item is upserted into the bot's CSV with a fresh
+   `LastSeen`; when the whole window has been read (every item either
+   cached or answered), items in the CSV that were not sighted are
+   pruned — the bot restocked.
+4. The window draws from the CSV. **Clicking a row** selects it and sends
+   the `/tell check <property-id>` price query; the reply lands in the
+   row's Price cell and back into the CSV.
+
+One wrinkle to handle in M1: `partner_items` holds *object ids*, which die
+when the trade closes — the CSV keys on the durable *property id*
+(`weenie_class_id`), which the appraisal answer supplies. The scan maps
+object → property as facts arrive.
+
 ## Per-bot inventory tracking (CSV)
 
 Every time the plugin sees a bot's stock, it upserts a CSV in plugin
@@ -127,10 +153,12 @@ reply parsing and filter logic are all tested without a running client.
 ### Commands
 
 - `/tradebrowse` — summary of tracked bots and their stock counts.
-- `/tradebrowse show` — open the window.
-- `/tradebrowse <bot>` — browse that bot's stock.
-- `/tradebrowse scan` — re-read the current bot's whole stock (the
-  concept's **Deep scan**).
+- `/tradebrowse show` — open the window (last-scanned bot).
+- `/tradebrowse scan` — re-appraise the current trade window's items now
+  (the concept's **Deep scan** re-validates even cached property ids).
+
+The scan runs automatically on `Event::Trade(Opened)`; the command is for
+forcing it mid-trade or after a partial read.
 
 ### Window
 
@@ -153,12 +181,14 @@ stays usable at 700×480.
 
 - **M0 — skeleton.** `plugin.json`, Cargo layout, empty window opens,
   `/tradebrowse` prints help. MIT LICENSE.
-- **M1 — inventory + appraisal.** CSV read/write/upsert/prune with
-  `LastSeen`; appraisal queue; `ItemFacts` cached by property id across
-  sessions; list draws icon/name/type/slots/cantrips/set, unappraised rows
-  greyed.
-- **M2 — price over /tell.** `protocol.rs` dialect table; click → `/tell
-  check <id>`; reply matched to the row and written back to the CSV.
+- **M1 — trade-window scan + inventory.** Watch `Event::Trade`; appraisal
+  queue over `partner_items` (`Host::identify`, one per tick); `ItemFacts`
+  cached by property id across sessions; CSV read/write/upsert/prune with
+  `LastSeen` and the complete-read guard; list draws
+  icon/name/type/slots/cantrips/set, unappraised rows greyed.
+- **M2 — price over /tell.** `protocol.rs` dialect table; row click →
+  `/tell check <id>`; reply matched to the row and written back to the
+  CSV.
 - **M3 — filters + sorting.** `FilterState`, the four tabs, cantrip bands,
   set recognition, sortable columns, Reset filters.
 - **M4 — polish.** Stat filters (Dam / Dam Resist / Crit / Heal Boost),
@@ -166,15 +196,12 @@ stays usable at 700×480.
 
 ## Open questions
 
-1. **Bot discovery.** Does the player name the bot (`/tradebrowse
-   CyTrader`), or should the plugin notice any bot that answers a
-   `points`/`check` style tell? v1: named by the player.
-2. **Stock read.** How does the plugin learn a bot's *whole* stock without
-   a bot-side change — does the bot list it on request, or does the player
-   open the trade window and the plugin reads `TradeState::partner_items`?
-   The trade-window route needs no bot cooperation at all and is the
-   likely v1 answer; the `/tell` route is the fallback.
-3. **Which OpenAC server build** for the spell table that defines cantrip
+1. **Bot identity for tells.** The trade window gives the partner's name
+   (`TradeState::partner_name`), which is what the `/tell` needs — but a
+   bot may answer tells under a slightly different name (spaces, case).
+   v1: use the partner name as-is; note mismatches in the status line so
+   the dialect table can carry an alias.
+2. **Which OpenAC server build** for the spell table that defines cantrip
    tiers — generated from the target server's own table, as
    spell-research does.
 
