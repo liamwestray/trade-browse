@@ -36,6 +36,7 @@ pub enum Kind {
     Bool,
     UintList,
     TextList,
+    FloatList,
     /// A click.
     Action,
     /// A checkbox's `onchange`: `Action<bool>`; the new state arrives on
@@ -43,6 +44,10 @@ pub enum Kind {
     BoolAction,
     /// A list row clicked.
     IntAction,
+    /// A header clicked: (column, descending).
+    IntBoolAction,
+    /// Column widths changed.
+    FloatListAction,
 }
 
 /// The category row's bindings, in `Categories::ALL` order.
@@ -164,6 +169,11 @@ pub const BINDINGS: &[(&str, Kind)] = &[
     ("FilterLine", Kind::Text),
     ("Selected", Kind::Int),
     ("Select", Kind::IntAction),
+    ("SortColumn", Kind::Int),
+    ("SortDescending", Kind::Bool),
+    ("Sort", Kind::IntBoolAction),
+    ("Widths", Kind::FloatList),
+    ("ColumnResize", Kind::FloatListAction),
     ("Icons", Kind::UintList),
     ("Names", Kind::TextList),
     ("NameColours", Kind::UintList),
@@ -313,7 +323,10 @@ impl Kind {
             Self::Bool => K::Bool,
             Self::UintList => K::UintList,
             Self::TextList => K::TextList,
+            Self::FloatList => K::FloatList,
             Self::Action => K::Action,
+            Self::IntBoolAction => K::IntBoolAction,
+            Self::FloatListAction => K::FloatListAction,
             Self::BoolAction => K::BoolAction,
             Self::IntAction => K::IntAction,
         }
@@ -330,87 +343,43 @@ pub const MARKUP: &str = markup();
 const fn markup() -> &'static str {
     // Written as one literal so the parser test reads exactly what the
     // player's window is built from.
-    r#"<panel w="760" h="620" theme="plugin" resizable="true" minw="620" minh="420">
-  <label x="10" y="8" text="{Summary}"/>
-  <label x="10" y="26" w="740" h="16" text="{FilterLine}"/>
-  <checkbox x="10" y="46" text="Weapons" checked="{CatWeapons}" onchange="{CatWeaponsAction}"/>
-  <checkbox x="80" y="46" text="Armor" checked="{CatArmor}" onchange="{CatArmorAction}"/>
-  <checkbox x="135" y="46" text="Clothing" checked="{CatClothing}" onchange="{CatClothingAction}"/>
-  <checkbox x="205" y="46" text="Jewelry" checked="{CatJewelry}" onchange="{CatJewelryAction}"/>
-  <checkbox x="270" y="46" text="Cloaks" checked="{CatCloaks}" onchange="{CatCloaksAction}"/>
-  <checkbox x="330" y="46" text="Summonons" checked="{CatSummonons}" onchange="{CatSummononsAction}"/>
-  <checkbox x="415" y="46" text="Aetheria" checked="{CatAetheria}" onchange="{CatAetheriaAction}"/>
-  <checkbox x="485" y="46" text="Salvage" checked="{CatSalvage}" onchange="{CatSalvageAction}"/>
-  <checkbox x="550" y="46" text="Other" checked="{CatOther}" onchange="{CatOtherAction}"/>
-  <checkbox x="10" y="66" text="Unenchentable" checked="{Unenchentable}" onchange="{UnenchentableAction}"/>
-  <checkbox x="10" y="86" text="Missile" checked="{WpnMissile}" onchange="{WpnMissileAction}"/>
-  <checkbox x="75" y="86" text="Heavy" checked="{WpnHeavy}" onchange="{WpnHeavyAction}"/>
-  <checkbox x="135" y="86" text="Finesse" checked="{WpnFinesse}" onchange="{WpnFinesseAction}"/>
-  <checkbox x="200" y="86" text="Light" checked="{WpnLight}" onchange="{WpnLightAction}"/>
-  <checkbox x="250" y="86" text="Shield" checked="{WpnShield}" onchange="{WpnShieldAction}"/>
-  <checkbox x="10" y="106" text="Necklace" checked="{SlotNecklace}" onchange="{SlotNecklaceAction}"/>
-  <checkbox x="80" y="106" text="Bracelet" checked="{SlotBracelet}" onchange="{SlotBraceletAction}"/>
-  <checkbox x="145" y="106" text="Ring" checked="{SlotRing}" onchange="{SlotRingAction}"/>
-  <checkbox x="190" y="106" text="Trinket" checked="{SlotTrinket}" onchange="{SlotTrinketAction}"/>
-  <checkbox x="250" y="106" text="Cloak" checked="{SlotCloak}" onchange="{SlotCloakAction}"/>
-  <checkbox x="305" y="106" text="Head" checked="{SlotHead}" onchange="{SlotHeadAction}"/>
-  <checkbox x="360" y="106" text="Chest" checked="{SlotChest}" onchange="{SlotChestAction}"/>
-  <checkbox x="415" y="106" text="Abdomen" checked="{SlotAbdomen}" onchange="{SlotAbdomenAction}"/>
-  <checkbox x="495" y="106" text="Upper Arms" checked="{SlotUpperArms}" onchange="{SlotUpperArmsAction}"/>
-  <checkbox x="585" y="106" text="Lower Arms" checked="{SlotLowerArms}" onchange="{SlotLowerArmsAction}"/>
-  <checkbox x="670" y="106" text="Hands" checked="{SlotHands}" onchange="{SlotHandsAction}"/>
-  <checkbox x="10" y="126" text="Upper Legs" checked="{SlotUpperLegs}" onchange="{SlotUpperLegsAction}"/>
-  <checkbox x="95" y="126" text="Lower Legs" checked="{SlotLowerLegs}" onchange="{SlotLowerLegsAction}"/>
-  <checkbox x="180" y="126" text="Feet" checked="{SlotFeet}" onchange="{SlotFeetAction}"/>
-  <checkbox x="10" y="146" text="Creature cantrips" checked="{CanCreature}" onchange="{CanCreatureAction}"/>
-  <checkbox x="125" y="146" text="Item cantrips" checked="{CanItem}" onchange="{CanItemAction}"/>
-  <checkbox x="230" y="146" text="Life cantrips" checked="{CanLife}" onchange="{CanLifeAction}"/>
-  <checkbox x="330" y="146" text="Regular only" checked="{CanRegular}" onchange="{CanRegularAction}"/>
-  <label x="10" y="168" text="Filter by cantrip level"/>
-  <button x="150" y="166" w="118" h="20" text="{BandMinor}" onclick="{BandMinorAction}"/>
-  <button x="268" y="166" w="118" h="20" text="{BandModerate}" onclick="{BandModerateAction}"/>
-  <button x="386" y="166" w="118" h="20" text="{BandMajor}" onclick="{BandMajorAction}"/>
-  <button x="504" y="166" w="118" h="20" text="{BandEpic}" onclick="{BandEpicAction}"/>
-  <button x="622" y="166" w="118" h="20" text="{BandLegendary}" onclick="{BandLegendaryAction}"/>
-  <button x="10" y="190" w="70" h="20" text="{SetSoldier}" onclick="{SetSoldierAction}"/>
-  <button x="84" y="190" w="60" h="20" text="{SetAdept}" onclick="{SetAdeptAction}"/>
-  <button x="148" y="190" w="62" h="20" text="{SetArcher}" onclick="{SetArcherAction}"/>
-  <button x="214" y="190" w="72" h="20" text="{SetDefender}" onclick="{SetDefenderAction}"/>
-  <button x="290" y="190" w="58" h="20" text="{SetTinker}" onclick="{SetTinkerAction}"/>
-  <button x="352" y="190" w="62" h="20" text="{SetCrafter}" onclick="{SetCrafterAction}"/>
-  <button x="418" y="190" w="58" h="20" text="{SetHearty}" onclick="{SetHeartyAction}"/>
-  <button x="480" y="190" w="68" h="20" text="{SetDextrous}" onclick="{SetDextrousAction}"/>
-  <button x="552" y="190" w="50" h="20" text="{SetWise}" onclick="{SetWiseAction}"/>
-  <button x="606" y="190" w="50" h="20" text="{SetSwift}" onclick="{SetSwiftAction}"/>
-  <button x="660" y="190" w="72" h="20" text="{SetHardened}" onclick="{SetHardenedAction}"/>
-  <button x="10" y="214" w="78" h="20" text="{SetReinforced}" onclick="{SetReinforcedAction}"/>
-  <button x="92" y="214" w="82" h="20" text="{SetInterlocking}" onclick="{SetInterlockingAction}"/>
-  <button x="178" y="214" w="80" h="20" text="{SetFlameProof}" onclick="{SetFlameProofAction}"/>
-  <button x="262" y="214" w="70" h="20" text="{SetAcidProof}" onclick="{SetAcidProofAction}"/>
-  <button x="336" y="214" w="72" h="20" text="{SetColdProof}" onclick="{SetColdProofAction}"/>
-  <button x="412" y="214" w="98" h="20" text="{SetLightningProof}" onclick="{SetLightningProofAction}"/>
-  <button x="514" y="214" w="76" h="20" text="{SetDedication}" onclick="{SetDedicationAction}"/>
-  <button x="594" y="214" w="56" h="20" text="{SetNone}" onclick="{SetNoneAction}"/>
-  <button x="654" y="214" w="78" h="20" text="{SetOther}" onclick="{SetOtherAction}"/>
-  <button x="10" y="238" w="740" h="20" text="Reset filters" onclick="{Reset}"/>
-  <button x="10" y="260" w="740" h="20" text="Deep scan" onclick="{Scan}"/>
-  <list x="10" y="286" w="740" h="290" rowheight="20" selected="{Selected}" onchange="{Select}">
+    r#"<panel w="760" h="620" theme="plugin" layout="column" padding="8" gap="4" resizable="true" minw="620" minh="420">
+  <label text="{Summary}"/>
+  <label text="{FilterLine}"/>
+  <group layout="row" gap="6" align="center"><checkbox text="Weapons" checked="{CatWeapons}" onchange="{CatWeaponsAction}"/><checkbox text="Armor" checked="{CatArmor}" onchange="{CatArmorAction}"/><checkbox text="Clothing" checked="{CatClothing}" onchange="{CatClothingAction}"/><checkbox text="Jewelry" checked="{CatJewelry}" onchange="{CatJewelryAction}"/><checkbox text="Cloaks" checked="{CatCloaks}" onchange="{CatCloaksAction}"/><checkbox text="Summonons" checked="{CatSummonons}" onchange="{CatSummononsAction}"/><checkbox text="Aetheria" checked="{CatAetheria}" onchange="{CatAetheriaAction}"/><checkbox text="Salvage" checked="{CatSalvage}" onchange="{CatSalvageAction}"/><checkbox text="Other" checked="{CatOther}" onchange="{CatOtherAction}"/></group>
+  <group layout="row" gap="6" align="center"><checkbox text="Unenchentable" checked="{Unenchentable}" onchange="{UnenchentableAction}"/></group>
+  <group layout="row" gap="6" align="center"><checkbox text="Missile" checked="{WpnMissile}" onchange="{WpnMissileAction}"/><checkbox text="Heavy" checked="{WpnHeavy}" onchange="{WpnHeavyAction}"/><checkbox text="Finesse" checked="{WpnFinesse}" onchange="{WpnFinesseAction}"/><checkbox text="Light" checked="{WpnLight}" onchange="{WpnLightAction}"/><checkbox text="Shield" checked="{WpnShield}" onchange="{WpnShieldAction}"/></group>
+  <group layout="row" gap="6" align="center"><checkbox text="Necklace" checked="{SlotNecklace}" onchange="{SlotNecklaceAction}"/><checkbox text="Bracelet" checked="{SlotBracelet}" onchange="{SlotBraceletAction}"/><checkbox text="Ring" checked="{SlotRing}" onchange="{SlotRingAction}"/><checkbox text="Trinket" checked="{SlotTrinket}" onchange="{SlotTrinketAction}"/><checkbox text="Cloak" checked="{SlotCloak}" onchange="{SlotCloakAction}"/><checkbox text="Head" checked="{SlotHead}" onchange="{SlotHeadAction}"/><checkbox text="Chest" checked="{SlotChest}" onchange="{SlotChestAction}"/><checkbox text="Abdomen" checked="{SlotAbdomen}" onchange="{SlotAbdomenAction}"/><checkbox text="Upper Arms" checked="{SlotUpperArms}" onchange="{SlotUpperArmsAction}"/><checkbox text="Lower Arms" checked="{SlotLowerArms}" onchange="{SlotLowerArmsAction}"/><checkbox text="Hands" checked="{SlotHands}" onchange="{SlotHandsAction}"/></group>
+  <group layout="row" gap="6" align="center"><checkbox text="Upper Legs" checked="{SlotUpperLegs}" onchange="{SlotUpperLegsAction}"/><checkbox text="Lower Legs" checked="{SlotLowerLegs}" onchange="{SlotLowerLegsAction}"/><checkbox text="Feet" checked="{SlotFeet}" onchange="{SlotFeetAction}"/></group>
+  <group layout="row" gap="6" align="center"><checkbox text="Creature cantrips" checked="{CanCreature}" onchange="{CanCreatureAction}"/><checkbox text="Item cantrips" checked="{CanItem}" onchange="{CanItemAction}"/><checkbox text="Life cantrips" checked="{CanLife}" onchange="{CanLifeAction}"/><checkbox text="Regular only" checked="{CanRegular}" onchange="{CanRegularAction}"/></group>
+  <group layout="row" gap="4" align="center"><label text="Filter by cantrip level"/><button w="118" h="20" text="{BandMinor}" onclick="{BandMinorAction}"/><button w="118" h="20" text="{BandModerate}" onclick="{BandModerateAction}"/><button w="118" h="20" text="{BandMajor}" onclick="{BandMajorAction}"/><button w="118" h="20" text="{BandEpic}" onclick="{BandEpicAction}"/><button w="118" h="20" text="{BandLegendary}" onclick="{BandLegendaryAction}"/></group>
+  <group layout="row" gap="4"><button w="70" h="20" text="{SetSoldier}" onclick="{SetSoldierAction}"/><button w="60" h="20" text="{SetAdept}" onclick="{SetAdeptAction}"/><button w="62" h="20" text="{SetArcher}" onclick="{SetArcherAction}"/><button w="72" h="20" text="{SetDefender}" onclick="{SetDefenderAction}"/><button w="58" h="20" text="{SetTinker}" onclick="{SetTinkerAction}"/><button w="62" h="20" text="{SetCrafter}" onclick="{SetCrafterAction}"/><button w="58" h="20" text="{SetHearty}" onclick="{SetHeartyAction}"/><button w="68" h="20" text="{SetDextrous}" onclick="{SetDextrousAction}"/><button w="50" h="20" text="{SetWise}" onclick="{SetWiseAction}"/><button w="50" h="20" text="{SetSwift}" onclick="{SetSwiftAction}"/><button w="72" h="20" text="{SetHardened}" onclick="{SetHardenedAction}"/></group>
+  <group layout="row" gap="4"><button w="78" h="20" text="{SetReinforced}" onclick="{SetReinforcedAction}"/><button w="82" h="20" text="{SetInterlocking}" onclick="{SetInterlockingAction}"/><button w="80" h="20" text="{SetFlameProof}" onclick="{SetFlameProofAction}"/><button w="70" h="20" text="{SetAcidProof}" onclick="{SetAcidProofAction}"/><button w="72" h="20" text="{SetColdProof}" onclick="{SetColdProofAction}"/><button w="98" h="20" text="{SetLightningProof}" onclick="{SetLightningProofAction}"/><button w="76" h="20" text="{SetDedication}" onclick="{SetDedicationAction}"/><button w="56" h="20" text="{SetNone}" onclick="{SetNoneAction}"/><button w="78" h="20" text="{SetOther}" onclick="{SetOtherAction}"/></group>
+  <button grow="1" h="20" text="Reset filters" onclick="{Reset}"/>
+  <button grow="1" h="20" text="Deep scan" onclick="{Scan}"/>
+  <list grow="1" rowheight="20" selected="{Selected}" onchange="{Select}" header="true" resizable="true" sortcolumn="{SortColumn}" sortdescending="{SortDescending}" onsort="{Sort}" widths="{Widths}" onresize="{ColumnResize}">
     <column type="icon" iconkind="did" values="{Icons}" onclick="{Select}" width="26"/>
     <column type="text" items="{Names}" colors="{NameColours}" header="Item" sort="text" width="190"/>
-    <column type="text" items="{Types}" header="Type" width="62"/>
-    <column type="text" items="{Slots}" header="Slots" width="70"/>
-    <column type="text" items="{Coverage}" header="Covered" width="90"/>
-    <column type="text" items="{CreatureCantrips}" header="Creature Cantrips" width="120"/>
-    <column type="text" items="{ItemCantrips}" header="Item Cantrips" width="110"/>
-    <column type="text" items="{LifeCantrips}" header="Life Cantrips" width="100"/>
-    <column type="text" items="{Sets}" header="Item Set" width="60"/>
-    <column type="text" items="{Ratings}" header="Ratings" width="90"/>
-    <column type="text" items="{Details}" header="Detail" width="80"/>
+    <column type="text" items="{Types}" header="Type" sort="text" width="62"/>
+    <column type="text" items="{Slots}" header="Slots" sort="text" width="70"/>
+    <column type="text" items="{Coverage}" header="Covered" sort="text" width="90"/>
+    <column type="text" items="{CreatureCantrips}" header="Creature Cantrips" sort="text" width="120"/>
+    <column type="text" items="{ItemCantrips}" header="Item Cantrips" sort="text" width="110"/>
+    <column type="text" items="{LifeCantrips}" header="Life Cantrips" sort="text" width="100"/>
+    <column type="text" items="{Sets}" header="Item Set" sort="text" width="60"/>
+    <column type="text" items="{Ratings}" header="Ratings" sort="text" width="90"/>
+    <column type="text" items="{Details}" header="Detail" sort="text" width="80"/>
     <column type="text" items="{Prices}" colors="{PriceColours}" header="Price" sort="number" width="60"/>
   </list>
-  <label x="10" y="580" w="740" h="18" text="{Status}"/>
+  <label text="{Status}"/>
 </panel>"#
 }
+
+/// The list's authored column widths, in markup order. The player can
+/// drag them; this is what the widths binding starts from.
+pub const AUTHORED_WIDTHS: [f32; 12] = [
+    26.0, 190.0, 62.0, 70.0, 90.0, 120.0, 110.0, 100.0, 60.0, 90.0, 80.0, 60.0,
+];
 
 /// What the rows hold, one entry per list column.
 #[derive(Debug, Default, Clone)]
@@ -477,6 +446,97 @@ impl Rows {
         rows
     }
 
+    /// Reorder every column by `column` (1 = Item; 0 is the icon column,
+    /// which never sorts), descending on request. The list shows the
+    /// rows as given, so the sort is the plugin's job.
+    pub fn sort_by(&mut self, column: i32, descending: bool) {
+        let Some(column) = usize::try_from(column).ok().filter(|c| *c >= 1) else {
+            return;
+        };
+        // Zip every column onto the row, order by the chosen key, then
+        // pull them apart again; every field moves with its row.
+        let height = self.property_ids.len();
+        let mut index: Vec<usize> = (0..height).collect();
+        let keys: Vec<&str> = match column {
+            1 => self.names.iter().map(String::as_str).collect::<Vec<&str>>(),
+            2 => self.types.iter().map(String::as_str).collect::<Vec<&str>>(),
+            3 => self.slots.iter().map(String::as_str).collect::<Vec<&str>>(),
+            4 => self
+                .coverage
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<&str>>(),
+            5 => self
+                .creature_cantrips
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<&str>>(),
+            6 => self
+                .item_cantrips
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<&str>>(),
+            7 => self
+                .life_cantrips
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<&str>>(),
+            8 => self.sets.iter().map(String::as_str).collect::<Vec<&str>>(),
+            9 => self
+                .ratings
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<&str>>(),
+            10 => self
+                .details
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<&str>>(),
+            11 => self
+                .prices
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<&str>>(),
+            _ => return,
+        };
+        let numeric = column == 11;
+        index.sort_by(|a, b| {
+            let order = if numeric {
+                number(keys[*a])
+                    .partial_cmp(&number(keys[*b]))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            } else {
+                keys[*a].to_lowercase().cmp(&keys[*b].to_lowercase())
+            };
+            if descending { order.reverse() } else { order }
+        });
+        let take = |column: &Vec<String>| {
+            index
+                .iter()
+                .map(|i| column[*i].clone())
+                .collect::<Vec<String>>()
+        };
+        let numbers = |column: &Vec<u32>| index.iter().map(|i| column[*i]).collect::<Vec<u32>>();
+        let ids = |column: &Vec<i64>| index.iter().map(|i| column[*i]).collect::<Vec<i64>>();
+        *self = Self {
+            property_ids: ids(&self.property_ids),
+            icons: numbers(&self.icons),
+            names: take(&self.names),
+            name_colours: numbers(&self.name_colours),
+            types: take(&self.types),
+            slots: take(&self.slots),
+            coverage: take(&self.coverage),
+            creature_cantrips: take(&self.creature_cantrips),
+            item_cantrips: take(&self.item_cantrips),
+            life_cantrips: take(&self.life_cantrips),
+            sets: take(&self.sets),
+            ratings: take(&self.ratings),
+            details: take(&self.details),
+            prices: take(&self.prices),
+            price_colours: numbers(&self.price_colours),
+        };
+    }
+
     /// One row per column: the UI cannot be handed rows whose columns
     /// disagree.
     #[must_use]
@@ -501,6 +561,18 @@ impl Rows {
         .iter()
         .all(|len| *len == height)
     }
+}
+
+/// The numeric key of a price cell: digits with commas removed, up to
+/// the first non-numeric word. "1,200 pts" reads as 1200; blank reads as
+/// the smallest, so unpriced rows sort together.
+fn number(cell: &str) -> f64 {
+    let cleaned: String = cell
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || *c == ',' || *c == '-' || *c == '.')
+        .filter(|c| *c != ',')
+        .collect();
+    cleaned.parse().unwrap_or(f64::NEG_INFINITY)
 }
 
 /// A row's name, with its stack count when it stacks: "Artist's Crystal
@@ -616,7 +688,10 @@ mod tests {
             Kind::Bool => K::Bool,
             Kind::UintList => K::UintList,
             Kind::TextList => K::TextList,
+            Kind::FloatList => K::FloatList,
             Kind::Action => K::Action,
+            Kind::IntBoolAction => K::IntBoolAction,
+            Kind::FloatListAction => K::FloatListAction,
             Kind::BoolAction => K::BoolAction,
             Kind::IntAction => K::IntAction,
         };

@@ -91,6 +91,13 @@ struct TradeBrowse {
     ticks: u32,
     /// The filter rows, as the concept draws them.
     filters: filters::FilterState,
+    /// The list's sort: column index (1 = the Item name; 0 is the icon
+    /// column, which never sorts) and direction.
+    sort_column: i32,
+    sort_descending: bool,
+    /// The list's column widths, as the player dragged them (empty: the
+    /// markup's authored widths).
+    widths: Vec<f32>,
     status: String,
 }
 
@@ -409,7 +416,8 @@ impl TradeBrowse {
                 complete: inventory.complete,
             }
         };
-        let rows = Rows::build(&shown);
+        let mut rows = Rows::build(&shown);
+        rows.sort_by(self.sort_column, self.sort_descending);
         let pending = self.queue.len() + usize::from(self.asked.is_some());
         panel.set(
             "Summary",
@@ -446,6 +454,16 @@ impl TradeBrowse {
             TypedValue::UintList(rows.price_colours.clone()),
         );
         panel.set("Status", self.status.clone());
+        panel.set("SortColumn", TypedValue::Int(self.sort_column));
+        panel.set("SortDescending", TypedValue::Bool(self.sort_descending));
+        panel.set(
+            "Widths",
+            TypedValue::FloatList(if self.widths.is_empty() {
+                view::AUTHORED_WIDTHS.to_vec()
+            } else {
+                self.widths.clone()
+            }),
+        );
         debug_assert!(rows.is_square(), "the list's columns must stay aligned");
         self.rows = rows;
         if let Err(why) = panel.flush(host) {
@@ -508,6 +526,24 @@ impl TradeBrowse {
                     host.chat_submit(&price::query(&price::DEFAULT, &self.bot, guid));
                     self.price_asked = Some((guid, property));
                     self.status = format!("Asked {} for {guid}…", self.bot);
+                }
+            }
+            "Sort" => {
+                // The header click arrives as Action<int, bool>: the
+                // column and its new direction.
+                if let Some((column, descending)) = int_bool(&value) {
+                    self.sort_column = column.max(1);
+                    self.sort_descending = descending;
+                    self.refresh(host);
+                }
+            }
+            "ColumnResize" => {
+                // The wire packs a float list as comma-joined text.
+                if let ActionValue::Text(joined) = &value {
+                    self.widths = joined
+                        .split(',')
+                        .filter_map(|word| word.trim().parse().ok())
+                        .collect();
                 }
             }
             "Scan" => self.begin_scan(host, true),
@@ -583,6 +619,16 @@ impl TradeBrowse {
             self.refresh(host);
         }
     }
+}
+
+/// An `Action<int, bool>` argument: the wire packs it as text, a flag
+/// byte then the number (OpenAC `ActionValue::from_int_bool`).
+fn int_bool(value: &ActionValue) -> Option<(i32, bool)> {
+    let ActionValue::Text(packed) = value else {
+        return None;
+    };
+    let (flag, number) = packed.split_at(1);
+    Some((number.parse().ok()?, flag.as_bytes().first()? != &0))
 }
 
 /// A checkbox's new state, as the wire carries it (`Int(1)` / `Int(0)`).
