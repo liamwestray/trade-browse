@@ -397,35 +397,53 @@ impl Band {
     }
 }
 
-/// The item set named in an item's title. The game's armour and jewelry
-/// sets all read "<Set> <Slot>", and the weapon and gem sets share the
-/// list; anything else has no set.
+/// The concept's set row, in its order.
+pub const SET_NAMES: [&str; 18] = [
+    "Soldier",
+    "Adept",
+    "Archer",
+    "Defender",
+    "Tinker",
+    "Crafter",
+    "Hearty",
+    "Dextrous",
+    "Wise",
+    "Swift",
+    "Hardened",
+    "Reinforced",
+    "Interlocking",
+    "Flame Proof",
+    "Acid Proof",
+    "Cold Proof",
+    "Lightning Proof",
+    "Dedication",
+];
+
+/// The set an item belongs to, read from its title.
+///
+/// The client carries no `ItemSet` property, so the name is the only
+/// signal. A set item reads "<Set> <Slot>" — "Soldier Gauntlets", "Flame
+/// Proof Breeches" — so the set must be a leading *word*, not merely a
+/// prefix: "Acid Greataxe" starts with "Acid" but is no set, while "Acid
+/// Proof Greaves" is. The longest name wins so a two-word set ("Flame
+/// Proof") is not shadowed by a shorter prefix.
 #[must_use]
 pub fn set_of(name: &str) -> &'static str {
-    const SETS: &[&str] = &[
-        "Soldier",
-        "Adept",
-        "Archer",
-        "Defender",
-        "Tinker",
-        "Crafter",
-        "Hearty",
-        "Dextrous",
-        "Wise",
-        "Swift",
-        "Hardened",
-        "Reinforced",
-        "Interlocking",
-        "Flame Proof",
-        "Acid Proof",
-        "Cold Proof",
-        "Lightning Proof",
-        "Dedication",
-    ];
     let lower = name.to_lowercase();
-    SETS.iter()
-        .find(|set| lower.starts_with(&set.to_lowercase()))
-        .map_or("", |set| set.as_ref())
+    SET_NAMES
+        .iter()
+        .filter(|set| {
+            let head = set.to_lowercase();
+            match lower.strip_prefix(&head) {
+                // The whole name is the set ("Soldier"), or a space
+                // follows it ("Soldier Gauntlets").
+                Some(rest) => rest.is_empty() || rest.starts_with(' '),
+                None => false,
+            }
+        })
+        .max_by_key(|set| set.chars().count())
+        .copied()
+        .unwrap_or("")
 }
 
 #[cfg(test)]
@@ -512,7 +530,17 @@ mod tests {
         assert_eq!(set_of("Adept Gauntlets"), "Adept");
         assert_eq!(set_of("Soldier Bow"), "Soldier");
         assert_eq!(set_of("Flame Proof Brogues"), "Flame Proof");
-        assert_eq!(set_of("Acid Greataxe"), "");
         assert_eq!(set_of("Dagger"), "");
+    }
+
+    #[test]
+    fn an_item_that_merely_starts_like_a_set_is_not_one() {
+        // The bug the prefix match shipped: "Acid Greataxe" begins with
+        // "Acid" but belongs to no set; only "Acid Proof <slot>" does.
+        assert_eq!(set_of("Acid Greataxe"), "");
+        assert_eq!(set_of("Acid Proof Greaves"), "Acid Proof");
+        assert_eq!(set_of("Acid Thigh Bar"), "");
+        assert_eq!(set_of("Soldierfish Scale"), "", "a word, not a prefix");
+        assert_eq!(set_of("Dextrous Wings"), "Dextrous");
     }
 }

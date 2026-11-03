@@ -531,28 +531,36 @@ impl TradeBrowse {
         };
         match handler {
             "Select" => {
-                // Clicking a row asks the bot its price. Bots match on
-                // the item's *object guid* — the number their own client
-                // sees — so the query uses the row's live id, and the
-                // reply is folded back onto the property id the CSV keys.
+                // Clicking a row asks the bot its price, by the item's
+                // *object guid* — the number the bot's own client sees.
+                // The open trade window is the live source; the row's
+                // cached guid (from the CSV) is the fallback for a bot
+                // traded earlier. The query always goes out — a stale id
+                // costs one "could not find" reply, which is more honest
+                // than a silent no-op.
                 let Some(index) = row else { return };
                 let Some(property) = self.rows.property_ids.get(index).copied() else {
                     return;
                 };
-                let guid = self
-                    .inventory
-                    .as_ref()
-                    .and_then(|inventory| inventory.find(property))
-                    .map(|row| row.object_id)
-                    .unwrap_or(0);
                 if self.bot.is_empty() {
                     self.status = "No bot to ask.".to_owned();
-                } else if guid == 0 {
-                    self.status = "Trade the bot again to ask its price.".to_owned();
                 } else {
-                    host.chat_submit(&price::query(&price::DEFAULT, &self.bot, guid));
-                    self.price_asked = Some((guid, property));
-                    self.status = format!("Asked {} for {guid}…", self.bot);
+                    // The row's guid is stamped from the live window on
+                    // every sighting, so it is the freshest number the
+                    // plugin holds for this item.
+                    let guid = self
+                        .inventory
+                        .as_ref()
+                        .and_then(|inventory| inventory.find(property))
+                        .map(|row| row.object_id)
+                        .unwrap_or(0);
+                    if guid == 0 {
+                        self.status = "Trade the bot again to ask its price.".to_owned();
+                    } else {
+                        host.chat_submit(&price::query(&price::DEFAULT, &self.bot, guid));
+                        self.price_asked = Some((guid, property));
+                        self.status = format!("Asked {} for {guid}…", self.bot);
+                    }
                 }
             }
             "Sort" => {
