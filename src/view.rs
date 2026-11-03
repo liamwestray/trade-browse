@@ -169,6 +169,7 @@ pub const BINDINGS: &[(&str, Kind)] = &[
     ("NameColours", Kind::UintList),
     ("Types", Kind::TextList),
     ("Slots", Kind::TextList),
+    ("Coverage", Kind::TextList),
     ("CreatureCantrips", Kind::TextList),
     ("ItemCantrips", Kind::TextList),
     ("LifeCantrips", Kind::TextList),
@@ -398,6 +399,7 @@ const fn markup() -> &'static str {
     <column type="text" items="{Names}" colors="{NameColours}" header="Item" sort="text" width="190"/>
     <column type="text" items="{Types}" header="Type" width="62"/>
     <column type="text" items="{Slots}" header="Slots" width="70"/>
+    <column type="text" items="{Coverage}" header="Covered" width="90"/>
     <column type="text" items="{CreatureCantrips}" header="Creature Cantrips" width="120"/>
     <column type="text" items="{ItemCantrips}" header="Item Cantrips" width="110"/>
     <column type="text" items="{LifeCantrips}" header="Life Cantrips" width="100"/>
@@ -420,6 +422,7 @@ pub struct Rows {
     pub name_colours: Vec<u32>,
     pub types: Vec<String>,
     pub slots: Vec<String>,
+    pub coverage: Vec<String>,
     pub creature_cantrips: Vec<String>,
     pub item_cantrips: Vec<String>,
     pub life_cantrips: Vec<String>,
@@ -438,9 +441,15 @@ impl Rows {
         let mut ordered: Vec<&Row> = inventory.rows.iter().collect();
         ordered.sort_by_key(|row| row.name.to_lowercase());
         for row in ordered {
-            // A row with no slots and no coverage recorded is one the
-            // appraisal has not answered yet: it draws greyed.
-            let appraised = !row.coverage.is_empty();
+            // A row the appraisal has answered carries at least a slot
+            // (armour and jewelry) or a category beyond Other (weapons,
+            // gems); a sighting alone leaves both blank.
+            let appraised = !row.slots.is_empty()
+                || !row.coverage.is_empty()
+                || !row.creature_cantrips.is_empty()
+                || !row.item_cantrips.is_empty()
+                || !row.life_cantrips.is_empty()
+                || row.category != crate::facts::Category::Other;
             rows.property_ids.push(row.property_id);
             rows.icons.push(row.icon_id);
             rows.names.push(display_name(row));
@@ -451,6 +460,7 @@ impl Rows {
             });
             rows.types.push(row.category.label().to_owned());
             rows.slots.push(row.slots.clone());
+            rows.coverage.push(row.coverage.clone());
             rows.creature_cantrips.push(row.creature_cantrips.clone());
             rows.item_cantrips.push(row.item_cantrips.clone());
             rows.life_cantrips.push(row.life_cantrips.clone());
@@ -478,6 +488,7 @@ impl Rows {
             self.name_colours.len(),
             self.types.len(),
             self.slots.len(),
+            self.coverage.len(),
             self.creature_cantrips.len(),
             self.item_cantrips.len(),
             self.life_cantrips.len(),

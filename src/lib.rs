@@ -288,6 +288,7 @@ impl TradeBrowse {
                     category: facts::category_of(object.item_type, valid_locations),
                     item_type: object.item_type,
                     valid_locations,
+                    coverage_mask: object.coverage_mask,
                     armor_level: host.int_property(object.object_id, ARMOR_LEVEL),
                     crit_rating: host.int_property(object.object_id, CRIT_RATING),
                     spell_ids: object.spell_ids.clone(),
@@ -423,6 +424,7 @@ impl TradeBrowse {
         );
         panel.set("Types", TypedValue::TextList(rows.types.clone()));
         panel.set("Slots", TypedValue::TextList(rows.slots.clone()));
+        panel.set("Coverage", TypedValue::TextList(rows.coverage.clone()));
         panel.set(
             "CreatureCantrips",
             TypedValue::TextList(rows.creature_cantrips.clone()),

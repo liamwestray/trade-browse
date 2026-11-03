@@ -29,8 +29,7 @@ pub struct Row {
     /// The wear slots by name, joined with `; ` — the CSV is a human
     /// file, and the filters read facts, not this.
     pub slots: String,
-    /// The valid-location bits as hex, kept for a round-trip back into
-    /// facts if the cache is ever rebuilt.
+    /// The covered body parts by name: "Chest, Upper Arms, Lower Arms".
     pub coverage: String,
     /// Armor level, blank when the item is not armour.
     pub armor_level: String,
@@ -96,14 +95,14 @@ impl Row {
             name: facts.name.clone(),
             category: facts.category,
             slots: crate::facts::slot_names(facts.valid_locations).join("; "),
-            coverage: bits(facts.valid_locations),
+            coverage: crate::facts::coverage_names(facts.coverage_mask),
             armor_level: facts
                 .armor_level
                 .map_or_else(String::new, |level| level.to_string()),
-            creature_cantrips: String::new(),
-            item_cantrips: String::new(),
-            life_cantrips: String::new(),
-            item_set: String::new(),
+            creature_cantrips: facts.creature_cantrips.join("; "),
+            item_cantrips: facts.item_cantrips.join("; "),
+            life_cantrips: facts.life_cantrips.join("; "),
+            item_set: facts.item_set.clone(),
             stack: facts.stack_size.max(1),
             price: String::new(),
             object_id: 0,

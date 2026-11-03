@@ -28,6 +28,9 @@ pub struct ItemFacts {
     pub item_type: u32,
     /// Where it may be worn or wielded (the valid-location bits).
     pub valid_locations: u32,
+    /// The body parts an armour piece covers (the retail CoverageMask
+    /// bits the client sends with the object).
+    pub coverage_mask: u32,
     /// Armor level, when it is armour.
     pub armor_level: Option<i32>,
     /// The cantrips on it, by spell id, as the appraisal listed them.
@@ -70,6 +73,63 @@ pub fn ratings_of(facts: &ItemFacts) -> String {
                 .map_or_else(|| cantrip.clone(), |(name, _)| name.trim_end().to_owned());
             parts.push(bare);
         }
+    }
+    parts.join(", ")
+}
+
+/// The body parts an armour piece covers, as the concept's Covered
+/// column names them. These are the retail `CoverageMask` bits the
+/// client sends with the object.
+pub mod coverage {
+    pub const HEAD: u32 = 0x0000_0001;
+    pub const CHEST: u32 = 0x0000_0002;
+    pub const ABDOMEN: u32 = 0x0000_0004;
+    pub const RIGHT_UPPER_ARM: u32 = 0x0000_0008;
+    pub const RIGHT_LOWER_ARM: u32 = 0x0000_0010;
+    pub const RIGHT_HAND: u32 = 0x0000_0020;
+    pub const LEFT_UPPER_ARM: u32 = 0x0000_0040;
+    pub const LEFT_LOWER_ARM: u32 = 0x0000_0080;
+    pub const LEFT_HAND: u32 = 0x0000_0100;
+    pub const RIGHT_UPPER_LEG: u32 = 0x0000_0200;
+    pub const RIGHT_LOWER_LEG: u32 = 0x0000_0400;
+    pub const RIGHT_FOOT: u32 = 0x0000_0800;
+    pub const LEFT_UPPER_LEG: u32 = 0x0000_1000;
+    pub const LEFT_LOWER_LEG: u32 = 0x0000_2000;
+    pub const LEFT_FOOT: u32 = 0x0000_4000;
+}
+
+/// The covered areas an item's coverage bits name, joined for the cell:
+/// left and right read as one ("Arms", "Legs", "Feet", "Hands").
+#[must_use]
+pub fn coverage_names(mask: u32) -> String {
+    let mut parts: Vec<&str> = Vec::new();
+    let both = |a: u32, b: u32| mask & (a | b) != 0;
+    if mask & coverage::HEAD != 0 {
+        parts.push("Head");
+    }
+    if mask & coverage::CHEST != 0 {
+        parts.push("Chest");
+    }
+    if mask & coverage::ABDOMEN != 0 {
+        parts.push("Abdomen");
+    }
+    if both(coverage::RIGHT_UPPER_ARM, coverage::LEFT_UPPER_ARM) {
+        parts.push("Upper Arms");
+    }
+    if both(coverage::RIGHT_LOWER_ARM, coverage::LEFT_LOWER_ARM) {
+        parts.push("Lower Arms");
+    }
+    if both(coverage::RIGHT_HAND, coverage::LEFT_HAND) {
+        parts.push("Hands");
+    }
+    if both(coverage::RIGHT_UPPER_LEG, coverage::LEFT_UPPER_LEG) {
+        parts.push("Upper Legs");
+    }
+    if both(coverage::RIGHT_LOWER_LEG, coverage::LEFT_LOWER_LEG) {
+        parts.push("Lower Legs");
+    }
+    if both(coverage::RIGHT_FOOT, coverage::LEFT_FOOT) {
+        parts.push("Feet");
     }
     parts.join(", ")
 }
