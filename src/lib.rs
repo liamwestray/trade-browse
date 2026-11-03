@@ -77,7 +77,8 @@ impl Plugin for TradeBrowse {
             "Browse a trade bot's stock: [show] opens the window, [scan] re-appraises",
         )?;
         let spec = view::BINDINGS.iter().fold(
-            PanelSpec::new("main", "Trade Browse", view::MARKUP),
+            // The dock slot reads "TB" rather than the derived "TR".
+            PanelSpec::new("main", "Trade Browse", view::MARKUP).icon_text("TB"),
             |spec, (name, kind)| spec.bind(name, kind.abi()),
         );
         self.panel = Some(host.register_panel(&spec)?);
