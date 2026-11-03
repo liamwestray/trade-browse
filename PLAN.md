@@ -1,195 +1,184 @@
 # trade-browse — plan
 
-A plugin for [openac-rust](../openac-rust) that turns a SkunkTrader bot's
-stock into a browsable, filterable appraisal window: sort and find items by
-type, slot, covered area, cantrip spells, item set, ratings, and more — the
-concept from the "Trade" screenshot, built as a first-class client plugin
-instead of a Decal overlay.
+A plugin for [OpenAC](https://github.com/eriknihlen/openac-rust) that
+browses a trade bot's stock: appraise every item, then sort and filter by
+armor type, cantrip spells, item set, slot, covered area, and more — the
+concept from the "Trade" screenshot.
+
+It works with **any** trade bot that answers a `/tell` price query, not
+SkunkTrader specifically. We use no bot data and ship no bot code, so this
+is simply an MIT-licensed browser.
 
 ```
-SkunkTrader (Decal/SkunkWorks bot, Windows)  ──┐
-                                               ├── trade-browse plugin (openac-rust, any OS)
-openac-rust client ── appraisal/peer APIs ─────┘
+player ──/tradebrowse──▶ trade-browse plugin
+                            │  /tell <bot> check <property-id>   (price)
+                            │  appraisal                         (facts)
+                            ▼
+                    trade bot  +  OpenAC server
 ```
 
-## What the concept window must do
+## The two kinds of information, and where each comes from
 
-From the screenshot, in order:
+### 1. Item facts — from appraising (the client's job)
 
-1. **Header** — bot name ("CyTrader bot"), stock tally ("200 of 200 items,
-   195 awaiting appraisal").
-2. **Category row** — Weapons / Armor / Clothing / Jewelry / Cloaks /
-   Summonons / Aetheria / Salvage / Other.
-3. **Enchantability** — Regular / Unenchentable.
-4. **Weapon subtypes** — Missile / Heavy / Finesse / Light / Shield.
-5. **Slots** — Neck, Bracelet, Ring, Trinket, Cloak, Head, Chest, Abdomen,
-   Upper Arms, Lower Arms, Hands, Upper Legs, Lower Legs, Feet.
-6. **Stat filters** — Dam / Dam Resist / Crit Dam / Crit Dam Resist /
-   Heal Boost.
-7. **Item sets** — Soldier, Adept, Archer, Defender, Tinker, Crafter,
-   Hearty, Dextrous, Wise, Swift, Hardened, Reinforced, Interlocking,
-   Flame Proof, Acid Proof, Cold Proof, Lightning Proof, Dedication,
-   No set.
-8. **Cantrip school** — Creature / Item / Life cantrips, "Regular only",
-   and a **cantrip level band** (Minor → Moderate → Major → Epic →
-   Legendary).
-9. **Actions** — Reset filters, Deep scan.
-10. **Results list** — Item (icon + name), Type, Slots, Creature
-    Cantrips, Item Cantrips, Life Cantrips, Item Set, Ratings, Detail;
-    stack counts ("x24"); a payment-methods footer ("Points: Trade Note
-    (250,000) [1], God Chest [2000], Durable Legendary Key [5]").
+The only way to learn an item's properties is to **appraise it**. The SDK
+answers a completed appraisal with everything the filters need:
 
-## Where the data comes from
-
-Two sources, kept cleanly separated:
-
-### A. The client (authoritative item truth)
-
-The openac-rust plugin SDK already exposes everything the filters need —
-no new client work for v1:
-
-| Need | SDK source |
+| Need | Source |
 |---|---|
-| Item in a trade/corpse/vendor | `Host::loot_contents`, `Host::vendor_item_properties` |
-| Appraisal facts | `Host::item_properties(id)` → full `ItemProperties` (ints, floats, strings, data ids, instance ids) |
-| Cantrips | `WorldObject::spell_ids` (the spells an appraisal listed on it) + `Host::spell(id)` for name/school/tier |
-| Slot / valid locations | `InventoryItem::valid_locations`, `item_type` |
-| Covered area | `InventoryItem::coverage_mask` (the body-part coverage bits) |
-| Armor type / SL | `ItemProperties::armor` (`ArmorProfile`) |
-| Weapon type / dam / crit | `ItemProperties::weapon` (`WeaponProfile`), wield difficulty + crit ints |
-| Item set | Name prefix + creation-profile string fallback |
-| Aetheria | `item_type` + `active_spell_ids` (surge spells) |
-| Icons | `WorldObject::icon_id` (proven in spell-research) |
+| Property id (the "long negative number") | `WorldObject::weenie_class_id`, shown signed |
+| Cantrip spells | `WorldObject::spell_ids` → `Host::spell(id)` for name, school, tier |
+| Slot | `valid_locations` bits |
+| Covered area | `coverage_mask` bits (head/chest/arms/legs/hands/feet) |
+| Armor type / level | `ItemProperties::armor` |
+| Weapon class / dam / crit | `ItemProperties::weapon` + wield difficulty |
+| Item set | name prefix (Soldier, Adept, Dextrous, …) |
+| Category | `item_type` bits → Weapons / Armor / Clothing / Jewelry / Cloaks / Summonons / Aetheria / Salvage / Other |
+| Icon | `WorldObject::icon_id` |
 
-### B. SkunkTrader (stock list + prices)
+Appraisals are answered **one at a time and rate-limited**, which is why
+the concept's header reads "195 awaiting appraisal". The plugin keeps a
+queue, asks for one per tick, and caches facts **by property id** — an
+Acid Greataxe appraised once is never appraised again, at any bot.
 
-SkunkTrader is a SkunkWorks script (`.swx`, C#) that runs under Decal on
-Windows. It keeps the sell list and point values. trade-browse needs its
-**inventory**: which items the bot has, how many, and at what price.
+### 2. Price — from the bot, over `/tell`
 
-Options, in order of preference:
+Clicking a row asks the bot what that item costs, by its **property id**:
 
-1. **File drop (simplest, zero bot changes).** SkunkTrader exports
-   `stock.json`; the player points trade-browse at the file (plugin
-   `storage_read`, or a path beside the plugin folder). Manual refresh,
-   but it unblocks everything else and is the v1 default.
-2. **Chat protocol (works with a stock SkunkTrader).** It already answers
-   `$check <item>` in open chat and `check`/`points`/`total` by tell. A
-   stock dump can be driven tell-by-tell and parsed. Workable for tens of
-   items, fragile for hundreds.
-3. **SkunkTrader patch (best UX).** Add one command — `browse` — that
-   replies with one line per stock item: `wcid|stack|value|name`
-   (SkunkWorks exposes the bot's full sell list). ~50 lines of C# in the
-   bot's `src/`. The local copy is MIT; keep the upstream copyright
-   notice on any fork.
+```
+/tell CyTrader check -20601
+```
 
-The plugin treats B as *pluggable*: a `StockSource` trait with these
-implementations, starting with (1) and growing into (3).
+The bot's reply is parsed for the price. This is the only bot-specific
+piece, and it is deliberately thin:
+
+- **Send** with `Host::chat_submit("/tell <bot> check <id>")`.
+- **Receive** through `Event::Chat(ChatLine)` where `kind == 3` (a tell),
+  matching `sender` against the bot's name and reading `text`.
+- The exact query word (`check`, `$check`, `price`) and reply shape vary
+  per bot, so both live in one small table — `protocol.rs` — not scattered
+  through the code. Adding a bot dialect is one row.
+
+No bot inventory is scraped, no bot files are read, and no bot code is
+bundled.
+
+## Per-bot inventory tracking (CSV)
+
+Every time the plugin sees a bot's stock, it upserts a CSV in plugin
+storage (`storage_write`, one file per bot, e.g. `CyTrader.csv`):
+
+| Column | Meaning |
+|---|---|
+| `PropertyId` | the signed weenie class id — the row's key |
+| `Name` | item name |
+| `Category` | Weapons / Armor / … |
+| `Slot` | valid-location name(s) |
+| `Coverage` | covered body parts |
+| `ArmorType` | Plate / Chain / … |
+| `ArmorLevel` | SL |
+| `CreatureCantrips` | names, level-banded |
+| `ItemCantrips` | names |
+| `LifeCantrips` | names |
+| `ItemSet` | Soldier / Adept / … / `No set` |
+| `Stack` | stack size |
+| `Price` | last price the bot quoted, blank if never asked |
+| `LastSeen` | unix ms of the most recent sighting |
+
+Rules:
+
+- **Sighting** = the item appears in the bot's stock this visit → refresh
+  its `LastSeen` (and any newly-appraised facts).
+- **Pruning** = an item in the CSV that is *not* sighted during a complete
+  stock read is **removed**. A partial read (a scan that stopped early)
+  must not prune; the file records whether the last read was complete.
+- The CSV is the source of the list, so a bot's stock opens instantly from
+  cache and appraisals only fill gaps.
 
 ## Architecture
 
+Follows the spell-research patterns exactly: a pure core unit-tested
+natively, a thin `lib.rs` against the host, declarative markup with a
+binding list that is parsed in a test so a typo fails the build.
+
 ```
 trade-browse/
-  plugin.json            # permissions: chat, listen (stock protocol)
+  plugin.json            # permissions: chat, listen
   src/
-    lib.rs               # Plugin wiring: commands, tick, panel events
-    stock.rs             # StockSource trait + file/chat/peer readers
-    scan.rs              # appraisal queue: ask server, collect facts, rate-limit
-    facts.rs             # ItemFacts: the flat, filterable view of one item
-    filters.rs           # FilterState: every checkbox/band from the concept
-    sets.rs              # item-set recognition (Soldier/Adept/…/Dedication)
-    cantrips.rs          # spell_ids → school + level band classification
-    ratings.rs           # simple 0–100 score: SL, cantrip levels, coverage
-    view.rs              # markup + bindings + row building
+    lib.rs               # wiring: commands, tick, panel events, /tell replies
+    view.rs              # markup, BINDINGS, row building (spell-research shape)
+    facts.rs             # ItemFacts: the flat filterable view of one item
+    appraisal.rs         # the one-at-a-time queue; facts by property id
+    inventory.rs         # the CSV: parse, upsert, prune, complete-read flag
+    price.rs             # /tell price requests, in flight, matched to replies
+    protocol.rs          # bot dialects: query word + reply patterns
+    filters.rs           # FilterState: every checkbox and band in the concept
+    sets.rs              # item-set recognition by name
+    cantrips.rs          # spell_ids → school + level band
   data/
-    sets.tsv             # set name → required slots/parts (transcribed)
-    cantrip-table.tsv    # generated: spell id → school, tier, name
+    sets.tsv             # set name → slots/parts (transcribed, sourced)
   PLAN.md
   README.md
 ```
 
-### The scan pipeline (the hard part)
+`inventory.rs`, `protocol.rs`, `filters.rs`, `sets.rs`, `cantrips.rs` and
+`price.rs` are pure — no host calls — so the CSV round-trip, pruning,
+reply parsing and filter logic are all tested without a running client.
 
-The screenshot's "195 awaiting appraisal" is the honest state: the client
-only learns an item's properties by appraising it, and the server answers
-appraisals **one at a time, rate-limited**. Design:
+### Commands
 
-1. `stock.rs` yields `StockItem { weenie_class_id, stack, price, name }`.
-2. `scan.rs` keeps a queue; each tick it asks for at most one appraisal
-   and records facts as answers arrive (`Event::ItemAppraisalCompleted`
-   or polling `item_properties`).
-3. Facts are **cached by weenie class id** via `storage_write` — a God
-   Chest greatsword appraised once is never re-appraised; "Deep scan"
-   re-validates only entries older than N days.
-4. Until an item is appraised it still shows in the list, greyed, with
-   whatever the name implies (type, set) — matching the concept's tally.
-
-### Filters (`filters.rs`)
-
-One bitset per filter family, OR within a family, AND across families —
-standard auction-house semantics:
-
-- `category` — from `item_type` bits: MeleeWeapon / MissileWeapon /
-  Clothing / Jewelry / Gem (summonons) / Aetheria / Salvage / Other
-- `enchantable` — ItemMana > 0 and no "unenchentable" marker
-- `weapon_subtype` — wield difficulty + weapon skill →
-  Missile / Heavy / Finesse / Light; shield type → Shield
-- `slot` — `valid_locations` bits → the 14 concept slots
-- `coverage` — `coverage_mask` bits → Head / Chest / Abdomen / UpperArms /
-  LowerArms / Hands / UpperLegs / LowerLegs / Feet
-- `stat` — Dam / Dam Resist / Crit Dam / Crit Dam Resist / Heal Boost
-  (v2: needs the ratings pass over armor/crit ints)
-- `set` — name-prefix table in `data/sets.tsv`
-- `cantrip_school` + `cantrip_band` — `spell_ids` → school (31 creature /
-  32 item / 33 life) and tier via the spell table; bands: Minor 1–3,
-  Moderate 4, Major 5, Epic 6, Legendary 7–8
+- `/tradebrowse` — summary of tracked bots and their stock counts.
+- `/tradebrowse show` — open the window.
+- `/tradebrowse <bot>` — browse that bot's stock.
+- `/tradebrowse scan` — re-read the current bot's whole stock (the
+  concept's **Deep scan**).
 
 ### Window
 
-Same technique as spell-research: declarative markup, typed bindings, a
-`<list>` with icon columns (real item icons via `iconkind="did"`, proven
-this week), text columns with per-cell colors. The concept's wall of
-checkboxes becomes **tabs** (Category / Slot & Coverage / Cantrips / Set)
-so the window stays usable at 700×480, with the active filters summarised
-in one line ("Armor · Chest+Legs · Legendary item cantrips").
+Same technique as spell-research: `<list>` with an icon column
+(`iconkind="did"`, real item icons) and text columns with per-cell colours;
+a tab row for the filter families so the concept's wall of checkboxes
+stays usable at 700×480.
+
+- **Tabs:** Category · Slot & Coverage · Cantrips · Set
+- **Cantrip level band:** Minor (1–3) · Moderate (4) · Major (5) ·
+  Epic (6) · Legendary (7–8)
+- **Columns:** Item, Type, Slots, Creature Cantrips, Item Cantrips, Life
+  Cantrips, Item Set, Price, Detail
+- **Header:** bot name, `N of M items, K awaiting appraisal`
+- **Row click** selects (status line shows the full recipe of filters) and
+  fires the `/tell` price check for that property id; the Price cell fills
+  in when the bot answers.
 
 ## Milestones
 
-- **M0 — skeleton (half a day).** Repo, plugin.json (`chat`, `listen`),
-  empty window opens with `/tradebrowse show`, `/tradebrowse` prints
-  help. Cargo layout above, MIT LICENSE.
-- **M1 — facts + file stock source (1–2 days).** `StockSource::file`
-  reading `stock.json`; appraisal queue; `ItemFacts` cached by wcid
-  across sessions; list shows icon / name / type / slots / cantrips / set
-  with "awaiting appraisal" greying. Useful with zero SkunkTrader
-  changes.
-- **M2 — filters + sorting (1–2 days).** `FilterState`, the four filter
-  tabs, cantrip bands, set recognition, sortable columns, Reset filters.
-- **M3 — SkunkTrader protocol (1–2 days + the .swx patch).** `browse`
-  command in an MIT-preserving SkunkTrader fork, `StockSource::chat`, bot
-  name + points footer in the header.
-- **M4 — ratings + polish (ongoing).** `ratings.rs` score, stat filters,
-  Deep scan, column layout matching the concept.
+- **M0 — skeleton.** `plugin.json`, Cargo layout, empty window opens,
+  `/tradebrowse` prints help. MIT LICENSE.
+- **M1 — inventory + appraisal.** CSV read/write/upsert/prune with
+  `LastSeen`; appraisal queue; `ItemFacts` cached by property id across
+  sessions; list draws icon/name/type/slots/cantrips/set, unappraised rows
+  greyed.
+- **M2 — price over /tell.** `protocol.rs` dialect table; click → `/tell
+  check <id>`; reply matched to the row and written back to the CSV.
+- **M3 — filters + sorting.** `FilterState`, the four tabs, cantrip bands,
+  set recognition, sortable columns, Reset filters.
+- **M4 — polish.** Stat filters (Dam / Dam Resist / Crit / Heal Boost),
+  ratings, Deep scan, payment-methods footer.
 
-## Open questions (answer before M1 ends)
+## Open questions
 
-1. **Which server?** The target emulator's dat tables decide spell ids for
-   cantrip bands. `data/cantrip-table.tsv` must be generated from the
-   *server's* spell table, like spell-research's dump workflow.
-2. **SkunkTrader fork vs. file drop?** M3 assumes we may patch the bot;
-   if upstream won't take it, the fork lives beside this repo.
-3. **Peer transport later?** openac-rust already has a plugin peer API
-   (`peer_subscribe`, `broadcast_command` with capability tags). A future
-   M5 could run a tiny companion plugin on the *bot side* and push stock
-   over peers — no Decal, no chat scraping. The `StockSource` trait keeps
-   a fourth variant open for it.
+1. **Bot discovery.** Does the player name the bot (`/tradebrowse
+   CyTrader`), or should the plugin notice any bot that answers a
+   `points`/`check` style tell? v1: named by the player.
+2. **Stock read.** How does the plugin learn a bot's *whole* stock without
+   a bot-side change — does the bot list it on request, or does the player
+   open the trade window and the plugin reads `TradeState::partner_items`?
+   The trade-window route needs no bot cooperation at all and is the
+   likely v1 answer; the `/tell` route is the fallback.
+3. **Which OpenAC server build** for the spell table that defines cantrip
+   tiers — generated from the target server's own table, as
+   spell-research does.
 
-## Licensing guardrails
+## Licensing
 
-- Everything here is MIT (Liam Westray), matching the other AC repos.
-- **Do not commit game data**: dat extracts, full spell dumps beyond the
-  small generated cantrip table, live-play screenshots, or Turbine
-  content. Transcribed community wiki facts (sets, bands) are fine with
-  source URLs in comments, as spell-research does.
-- SkunkTrader is MIT (upstream: gitlab.com/Cyprias/SkunkTrader); any
-  patch we ship keeps its copyright notice intact.
+MIT, © Liam Westray. No bot code, no bot data, no game content. Transcribed
+community facts (item sets, cantrip bands) carry source URLs in comments.
