@@ -330,7 +330,7 @@ pub const MARKUP: &str = markup();
 const fn markup() -> &'static str {
     // Written as one literal so the parser test reads exactly what the
     // player's window is built from.
-    r#"<panel w="760" h="620">
+    r#"<panel w="760" h="620" theme="plugin" resizable="true" minw="620" minh="420">
   <label x="10" y="8" text="{Summary}"/>
   <label x="10" y="26" w="740" h="16" text="{FilterLine}"/>
   <checkbox x="10" y="46" text="Weapons" checked="{CatWeapons}" onchange="{CatWeaponsAction}"/>
