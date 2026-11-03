@@ -44,12 +44,12 @@ pub struct Row {
     pub stack: u32,
     /// The last price the bot quoted, blank until asked.
     pub price: String,
-    /// The object id the *current* trade window renders this item under.
-    /// Bots price by this guid, so a row click queries it. It is written
-    /// to the file as a hint only: a guid from a closed trade is dead,
-    /// and the scan refreshes it on every sighting. 0 means "never seen
-    /// in an open window".
-    pub object_id: u32,
+    /// The item's guid, signed the way the bots spell it — always
+    /// negative, e.g. -42637. Bots price by this number, so a row click
+    /// queries it. It is written to the file as a hint only: a guid from
+    /// a closed trade is dead, and the scan refreshes it on sighting.
+    /// 0 means "never seen in an open window".
+    pub object_id: i64,
     /// The item's icon surface; 0 until the client has described it.
     pub icon_id: u32,
     /// What the cantrips do for the buyer: "Heal Boost 1", "Crit Dam Resist 2".
@@ -66,6 +66,7 @@ impl Row {
     /// which is enough to list it greyed and to price it.
     #[must_use]
     pub fn from_sighting(object: &openac_plugin::world::WorldObject, now: i64) -> Self {
+        let guid = crate::facts::property_id(object.object_id);
         Self {
             property_id: crate::facts::property_id(object.weenie_class_id),
             name: object.name.clone(),
@@ -79,7 +80,7 @@ impl Row {
             item_set: String::new(),
             stack: u32::try_from(object.stack_size.max(1)).unwrap_or(1),
             price: String::new(),
-            object_id: object.object_id,
+            object_id: guid,
             icon_id: object.icon_id,
             ratings: String::new(),
             detail: String::new(),

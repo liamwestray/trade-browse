@@ -52,7 +52,9 @@ const BUSY_TICKS: u32 = 4;
 /// signed weenie class stays the key of the facts cache and the CSV.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct ScanItem {
+    /// The client's object id, unsigned: what `Host::object` answers.
     object_id: u32,
+    /// The signed weenie class: the facts cache and CSV key.
     property_id: i64,
 }
 
@@ -78,14 +80,12 @@ struct TradeBrowse {
     queue: Vec<ScanItem>,
     /// The appraisal in flight, if any.
     asked: Option<ScanItem>,
-    /// The object ids the last scan saw, so a trade-window change can
-    /// tell an added item from a re-render of one already sighted.
-    last_offered: BTreeSet<u32>,
     /// Facts learned this session, keyed by property id.
     facts: BTreeMap<i64, ItemFacts>,
     /// The (object guid we asked about, property id to write the answer
-    /// to) of the outstanding price query.
-    price_asked: Option<(u32, i64)>,
+    /// to) of the outstanding price query. The guid is signed, as the
+    /// bots spell it.
+    price_asked: Option<(i64, i64)>,
     /// The rows currently shown, which the UI's row indexes refer to.
     rows: Rows,
     ticks: u32,
@@ -146,7 +146,6 @@ impl Plugin for TradeBrowse {
                         self.queue.clear();
                         self.asked = None;
                         self.price_asked = None;
-                        self.last_offered.clear();
                         self.save(host);
                     }
                     openac_plugin::trade::TradeEvent::PartnerAccepted(_) => {}
@@ -206,32 +205,6 @@ impl TradeBrowse {
         self.load(host, &trade.partner_name);
         let now = unix_ms(host);
         let offered: BTreeSet<u32> = trade.partner_items.iter().copied().collect();
-        // A trade-window change re-renders *every* item under a new object
-        // id. The old ids are then dead — the server will never answer an
-        // appraisal or a price for them — so the scan re-queues against
-        // the new ids and forgets the old ones entirely.
-        let re_rendered = !self.last_offered.is_empty()
-            && !offered.is_subset(&self.last_offered)
-            && self
-                .last_offered
-                .iter()
-                .all(|id| host.object(*id).is_none());
-        if re_rendered {
-            self.queue.clear();
-            self.asked = None;
-            self.price_asked = None;
-        }
-        self.last_offered = offered.clone();
-        // A row whose guid is no longer in the window is stale: the trade
-        // that rendered it closed. Clear its guid so a click tells the
-        // player to re-trade rather than asking the bot for a dead id.
-        if let Some(inventory) = &mut self.inventory {
-            for row in &mut inventory.rows {
-                if row.object_id != 0 && !offered.contains(&row.object_id) {
-                    row.object_id = 0;
-                }
-            }
-        }
 
         let mut sighted: BTreeSet<i64> = BTreeSet::new();
         let mut unread = 0usize;
@@ -260,7 +233,7 @@ impl TradeBrowse {
                 }
                 if cached {
                     let mut fresh = Row::from_facts(&self.facts[&property], now);
-                    fresh.object_id = object_id;
+                    fresh.object_id = facts::property_id(object_id);
                     if let Some(existing) = inventory.find(property) {
                         fresh.price = existing.price.clone();
                     }
@@ -329,7 +302,7 @@ impl TradeBrowse {
                 let now = unix_ms(host);
                 if let Some(inventory) = &mut self.inventory {
                     let mut row = Row::from_facts(&facts, now);
-                    row.object_id = asked.object_id;
+                    row.object_id = facts::property_id(asked.object_id);
                     if let Some(existing) = inventory.find(property) {
                         row.price = existing.price.clone();
                     }
@@ -343,33 +316,9 @@ impl TradeBrowse {
         let Some(item) = (!self.queue.is_empty()).then(|| self.queue.remove(0)) else {
             return;
         };
-        // The id may have died while it waited behind another appraisal:
-        // a trade-window change re-renders everything. Re-queue against
-        // the live id rather than asking the server for a ghost.
+        // The item left the window while its appraisal waited; nothing
+        // to appraise.
         let Some(object) = host.object(item.object_id) else {
-            let live = host
-                .trade()
-                .partner_items
-                .iter()
-                .find(|id| {
-                    host.object(**id)
-                        .is_some_and(|o| facts::property_id(o.weenie_class_id) == item.property_id)
-                })
-                .copied();
-            match live {
-                Some(fresh) => {
-                    let item = ScanItem {
-                        object_id: fresh,
-                        property_id: item.property_id,
-                    };
-                    if !self.queue.contains(&item) {
-                        self.queue.push(item);
-                    }
-                }
-                None => {
-                    // The item left the window; nothing to appraise.
-                }
-            }
             return;
         };
         let item = ScanItem {
@@ -417,7 +366,7 @@ impl TradeBrowse {
         if !sender.eq_ignore_ascii_case(&self.bot) {
             return;
         }
-        match price::parse_reply(text, i64::from(guid)) {
+        match price::parse_reply(text, guid) {
             price::Reply::Price { price, .. } => {
                 if let Some(inventory) = &mut self.inventory {
                     inventory.set_price(property, &price);
@@ -554,9 +503,9 @@ impl TradeBrowse {
                 } else if guid == 0 {
                     self.status = "Trade the bot again to ask its price.".to_owned();
                 } else {
-                    host.chat_submit(&price::query(&price::DEFAULT, &self.bot, i64::from(guid)));
+                    host.chat_submit(&price::query(&price::DEFAULT, &self.bot, guid));
                     self.price_asked = Some((guid, property));
-                    self.status = format!("Asked {} for #{guid}…", self.bot);
+                    self.status = format!("Asked {} for {guid}…", self.bot);
                 }
             }
             "Scan" => self.begin_scan(host, true),
