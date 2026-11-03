@@ -1,0 +1,25 @@
+[package]
+name = "trade-browse"
+version = "0.1.0"
+edition = "2024"
+description = "Browse and filter trade bots' stock: appraise the trade window, price by /tell."
+license = "MIT"
+
+[lib]
+# cdylib builds the wasm module; rlib lets the logic be tested natively.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+openac-plugin = { path = "../openac-rust/crates/openac-plugin" }
+
+[profile.release]
+# A panic stops the plugin; the client unloads it and says why.
+panic = "abort"
+opt-level = "s"
+lto = true
+codegen-units = 1
+
+[dev-dependencies]
+# Only the tests reach for the markup parser, to check the window's markup
+# against its declared bindings before a player ever sees it.
+ac-plugin-ui = { path = "../openac-rust/crates/ac-plugin-ui" }

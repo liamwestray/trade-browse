@@ -1,0 +1,22 @@
+{
+  "id": "liamwestray.trade-browse",
+  "displayName": "Trade Browse",
+  "version": "0.1.0",
+  "entry": "trade_browse.wasm",
+  "apiVersion": "1.4",
+  "minHostVersion": "0.1.0",
+  "permissionsVersion": 1,
+  "permissions": [
+    {
+      "name": "chat",
+      "note": "Asks trade bots for item prices with /tell, and reports in chat."
+    },
+    {
+      "name": "listen",
+      "note": "Hears the bots' /tell replies so a price can fill its row."
+    }
+  ],
+  "limits": {
+    "memoryMiB": 16
+  }
+}
