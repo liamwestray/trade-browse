@@ -257,10 +257,14 @@ impl TradeBrowse {
                 // object record itself, long before the appraisal
                 // answers. Cache them as partial facts so the filters can
                 // read this row now.
-                if let Some(partial) = self.facts_from_object(host, object_id) {
-                    self.facts.insert(property, partial);
+                let partial = self.facts_from_object(host, object_id);
+                if let Some(partial) = &partial {
+                    self.facts.insert(property, partial.clone());
                 }
-                sightings.push((property, Row::from_sighting(&object, now)));
+                // The row is built from the partial facts too, so the
+                // set, slots and covered columns fill before the
+                // appraisal lands.
+                sightings.push((property, Row::from_sighting(&object, partial.as_ref(), now)));
             }
         }
         if let Some(inventory) = &mut self.inventory {

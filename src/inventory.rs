@@ -62,21 +62,27 @@ pub struct Row {
 impl Row {
     /// A row for an item the trade window shows but the appraisal has not
     /// answered: the object record already carries name, icon and stack,
-    /// which is enough to list it greyed and to price it.
+    /// which is enough to list it greyed and to price it. `partial` is
+    /// what the object record alone can say (category, slots, coverage,
+    /// set); the cantrip columns wait for the appraisal.
     #[must_use]
-    pub fn from_sighting(object: &openac_plugin::world::WorldObject, now: i64) -> Self {
+    pub fn from_sighting(
+        object: &openac_plugin::world::WorldObject,
+        partial: Option<&ItemFacts>,
+        now: i64,
+    ) -> Self {
         let guid = crate::facts::property_id(object.object_id);
         Self {
             property_id: crate::facts::property_id(object.weenie_class_id),
             name: object.name.clone(),
-            category: Category::Other,
-            slots: String::new(),
-            coverage: String::new(),
+            category: partial.map_or(Category::Other, |facts| facts.category),
+            slots: partial.map_or_else(String::new, |facts| facts.slots.join("; ")),
+            coverage: partial.map_or_else(String::new, |facts| facts.covered.clone()),
             armor_level: String::new(),
             creature_cantrips: String::new(),
             item_cantrips: String::new(),
             life_cantrips: String::new(),
-            item_set: String::new(),
+            item_set: partial.map_or_else(String::new, |facts| facts.item_set.clone()),
             stack: u32::try_from(object.stack_size.max(1)).unwrap_or(1),
             price: String::new(),
             object_id: guid,
