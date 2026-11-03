@@ -618,12 +618,18 @@ impl TradeBrowse {
             }
             "scan" => self.begin_scan(host, true),
             "dump" => {
-                self.dump.clear();
-                self.dumping = true;
-                self.begin_scan(host, true);
-                host.chat_post(
-                    "Trade Browse: recording every appraisal. The file lands in the plugin's data folder when the scan drains.",
-                );
+                if self.dumping {
+                    // A second `dump` stops recording and writes what was
+                    // gathered so far.
+                    self.finish_dump(host);
+                } else {
+                    self.dump.clear();
+                    self.dumping = true;
+                    host.chat_post(
+                        "Trade Browse: recording appraisals. The file lands in the plugin's data folder when the scan drains; say `/tradebrowse dump` again to write early.",
+                    );
+                }
+                self.refresh(host);
             }
             _ => {
                 let bots = self
@@ -664,21 +670,40 @@ impl TradeBrowse {
                 if self.bot.is_empty() {
                     self.status = "No bot to ask.".to_owned();
                 } else {
-                    // The row's guid is stamped from the live window on
-                    // every sighting, so it is the freshest number the
-                    // plugin holds for this item.
-                    let guid = self
+                    // The freshest number the plugin holds for this
+                    // item: the open trade window's live object id wins;
+                    // the row's cached guid (stamped at the last scan) is
+                    // the fallback.
+                    let live = host
+                        .trade()
+                        .partner_items
+                        .iter()
+                        .find(|id| {
+                            host.object(**id)
+                                .is_some_and(|o| facts::property_id(o.weenie_class_id) == property)
+                        })
+                        .map(|id| facts::property_id(*id));
+                    let cached = self
                         .inventory
                         .as_ref()
                         .and_then(|inventory| inventory.find(property))
                         .map(|row| row.object_id)
                         .unwrap_or(0);
-                    if guid == 0 {
-                        self.status = "Trade the bot again to ask its price.".to_owned();
-                    } else {
-                        host.chat_submit(&price::query(&price::DEFAULT, &self.bot, guid));
-                        self.price_asked = Some((guid, property));
-                        self.status = format!("Asked {} for {guid}…", self.bot);
+                    let guid = live.or((cached != 0).then_some(cached));
+                    match guid {
+                        Some(guid) => {
+                            host.chat_submit(&price::query(&price::DEFAULT, &self.bot, guid));
+                            self.price_asked = Some((guid, property));
+                            self.status = format!("Asked {} for {guid}…", self.bot);
+                        }
+                        // No live item and no remembered guid: ask the
+                        // bot for the property id anyway — some bots
+                        // match that too, and silence is worse.
+                        None => {
+                            host.chat_submit(&price::query(&price::DEFAULT, &self.bot, property));
+                            self.price_asked = Some((property, property));
+                            self.status = format!("Asked {} for {property}…", self.bot);
+                        }
                     }
                 }
             }
