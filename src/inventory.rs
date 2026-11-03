@@ -17,7 +17,7 @@ use crate::facts::{Category, ItemFacts};
 /// The columns, in file order. `PropertyId` is the row's key.
 pub const HEADER: &str = "PropertyId,Name,Category,Slots,Coverage,\
                           ArmorLevel,CreatureCantrips,ItemCantrips,LifeCantrips,\
-                          ItemSet,Stack,Price,LastSeen,IconId,Ratings,Detail";
+                          ItemSet,Stack,Price,LastSeen,IconId,Ratings,Detail,ObjectId";
 
 /// One tracked item of one bot.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -44,6 +44,12 @@ pub struct Row {
     pub stack: u32,
     /// The last price the bot quoted, blank until asked.
     pub price: String,
+    /// The object id the *current* trade window renders this item under.
+    /// Bots price by this guid, so a row click queries it. It is written
+    /// to the file as a hint only: a guid from a closed trade is dead,
+    /// and the scan refreshes it on every sighting. 0 means "never seen
+    /// in an open window".
+    pub object_id: u32,
     /// The item's icon surface; 0 until the client has described it.
     pub icon_id: u32,
     /// What the cantrips do for the buyer: "Heal Boost 1", "Crit Dam Resist 2".
@@ -55,6 +61,32 @@ pub struct Row {
 }
 
 impl Row {
+    /// A row for an item the trade window shows but the appraisal has not
+    /// answered: the object record already carries name, icon and stack,
+    /// which is enough to list it greyed and to price it.
+    #[must_use]
+    pub fn from_sighting(object: &openac_plugin::world::WorldObject, now: i64) -> Self {
+        Self {
+            property_id: crate::facts::property_id(object.weenie_class_id),
+            name: object.name.clone(),
+            category: Category::Other,
+            slots: String::new(),
+            coverage: String::new(),
+            armor_level: String::new(),
+            creature_cantrips: String::new(),
+            item_cantrips: String::new(),
+            life_cantrips: String::new(),
+            item_set: String::new(),
+            stack: u32::try_from(object.stack_size.max(1)).unwrap_or(1),
+            price: String::new(),
+            object_id: object.object_id,
+            icon_id: object.icon_id,
+            ratings: String::new(),
+            detail: String::new(),
+            last_seen: now,
+        }
+    }
+
     /// A row for a freshly-appraised fact, sighted at `now`.
     #[must_use]
     pub fn from_facts(facts: &ItemFacts, now: i64) -> Self {
@@ -73,6 +105,7 @@ impl Row {
             item_set: String::new(),
             stack: facts.stack_size.max(1),
             price: String::new(),
+            object_id: 0,
             icon_id: facts.icon_id,
             ratings: facts.ratings.clone(),
             detail: facts.detail.clone(),
@@ -143,6 +176,7 @@ impl Inventory {
                 stack,
                 price: fields[11].clone(),
                 last_seen,
+                object_id: fields.get(16).and_then(|v| v.parse().ok()).unwrap_or(0),
                 icon_id: fields[13].parse().unwrap_or(0),
                 ratings: fields[14].clone(),
                 detail: fields[15].clone(),
@@ -173,6 +207,7 @@ impl Inventory {
         {
             existing.last_seen = row.last_seen;
             existing.stack = row.stack;
+            existing.object_id = row.object_id;
             // The sighting's facts win wherever they are known; a price
             // already quoted survives, and so does any richer cached
             // field the new row left blank (cantrips filled by a later
@@ -279,6 +314,7 @@ fn join(row: &Row) -> String {
         row.icon_id.to_string(),
         quote(&row.ratings),
         quote(&row.detail),
+        row.object_id.to_string(),
     ]
     .join(",")
 }
@@ -334,6 +370,7 @@ mod tests {
             stack: 1,
             price: String::new(),
             last_seen: seen,
+            object_id: 0,
             icon_id: 0,
             ratings: String::new(),
             detail: String::new(),
