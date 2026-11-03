@@ -238,16 +238,22 @@ impl TradeBrowse {
                     self.queue.push(item);
                     queued_now += 1;
                 }
+                // The live guid is what a price click needs, and the
+                // object record carries it whether or not the appraisal
+                // has answered — so both sighting paths stamp it. A row
+                // left holding a previous trade's guid (or 0) would
+                // silently refuse to ask.
+                let guid = facts::property_id(object_id);
                 if cached {
                     let mut fresh = Row::from_facts(&self.facts[&property], now);
-                    fresh.object_id = facts::property_id(object_id);
+                    fresh.object_id = guid;
                     if let Some(existing) = inventory.find(property) {
                         fresh.price = existing.price.clone();
                     }
                     inventory.sight(fresh);
                 } else {
-                    // The name and icon arrive with the object record
-                    // itself, long before the appraisal answers.
+                    // The name, icon and guid arrive with the object
+                    // record itself, long before the appraisal answers.
                     inventory.sight(Row::from_sighting(&object, now));
                 }
             }
