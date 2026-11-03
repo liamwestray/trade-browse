@@ -89,6 +89,12 @@ struct TradeBrowse {
     /// The rows currently shown, which the UI's row indexes refer to.
     rows: Rows,
     ticks: u32,
+    /// The raw-appraisal dump gathered during `/tradebrowse dump`: one
+    /// CSV line per item, every number the client holds for it. Written
+    /// to `dump/appraisals.csv` in plugin data when the scan drains.
+    dump: Vec<String>,
+    /// Whether the next scans should record raw properties.
+    dumping: bool,
     /// The filter rows, as the concept draws them.
     filters: filters::FilterState,
     /// The list's sort: column index (1 = the Item name; 0 is the icon
@@ -331,6 +337,10 @@ impl TradeBrowse {
                 facts.ratings = facts::ratings_of(&facts);
                 facts.detail = detail_of(&facts);
                 self.facts.insert(property, facts.clone());
+                if self.dumping {
+                    let line = self.dump_line(host, object.object_id, &facts);
+                    self.dump.push(line);
+                }
                 let now = unix_ms(host);
                 if let Some(inventory) = &mut self.inventory {
                     let mut row = Row::from_facts(&facts, now);
@@ -344,6 +354,9 @@ impl TradeBrowse {
                 self.asked = None;
             }
             return;
+        }
+        if self.dumping && self.queue.is_empty() {
+            self.finish_dump(host);
         }
         let Some(item) = (!self.queue.is_empty()).then(|| self.queue.remove(0)) else {
             return;
@@ -498,6 +511,100 @@ impl TradeBrowse {
         }
     }
 
+    /// One raw-appraisal line: the ids we key by, then every number the
+    /// client holds for the object, keyed by its property id.
+    fn dump_line(&mut self, host: &mut Host<'_>, object_id: u32, facts: &ItemFacts) -> String {
+        let mut fields = vec![
+            format!("guid {}", facts::property_id(object_id)),
+            format!("property {}", facts.property_id),
+            format!("name {}", facts.name),
+            format!("icon {}", facts.icon_id),
+            format!("stack {}", facts.stack_size),
+            format!("item_type {:#X}", facts.item_type),
+            format!("valid_locations {:#X}", facts.valid_locations),
+            format!("coverage {:#X}", facts.coverage_mask),
+            format!(
+                "spells {}",
+                facts
+                    .spell_ids
+                    .iter()
+                    .map(|id| id.to_string())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            ),
+        ];
+        if let Some(properties) = host.properties(object_id) {
+            for (id, value) in &properties.ints {
+                fields.push(format!("int{id} {value}"));
+            }
+            for (id, value) in &properties.floats {
+                fields.push(format!("float{id} {value}"));
+            }
+            for (id, value) in &properties.bools {
+                fields.push(format!("bool{id} {}", u8::from(*value)));
+            }
+            for (id, value) in &properties.data_ids {
+                fields.push(format!("data{id} {value}"));
+            }
+            for (id, value) in &properties.instance_ids {
+                fields.push(format!("instance{id} {value}"));
+            }
+            if let Some(weapon) = &properties.weapon {
+                fields.push(format!(
+                    "weapon {} {} {} {} {} {} {} {}",
+                    weapon.damage_type,
+                    weapon.weapon_time,
+                    weapon.weapon_skill,
+                    weapon.damage,
+                    weapon.damage_variance,
+                    weapon.damage_mod,
+                    weapon.max_velocity,
+                    weapon.weapon_offense,
+                ));
+            }
+            if let Some(armor) = &properties.armor {
+                fields.push(format!(
+                    "armor {} {} {} {} {} {} {} {}",
+                    armor.armor_level,
+                    armor.slash_mod,
+                    armor.pierce_mod,
+                    armor.bludgeon_mod,
+                    armor.cold_mod,
+                    armor.fire_mod,
+                    armor.acid_mod,
+                    armor.nether_mod,
+                ));
+            }
+        }
+        fields.join(",")
+    }
+
+    /// Write the recorded dump and stop recording.
+    fn finish_dump(&mut self, host: &mut Host<'_>) {
+        self.dumping = false;
+        let place = StoragePlace::global(StorageRoot::PluginData);
+        let text = format!(
+            "recorded {} item(s)\n{}",
+            self.dump.len(),
+            self.dump.join("\n")
+        );
+        match host.storage_write_text(&place, "dump/appraisals.csv", &text) {
+            Ok(()) => {
+                self.status = format!(
+                    "Dumped {} appraisal(s) to the plugin's data folder.",
+                    self.dump.len()
+                );
+                host.chat_post(&format!(
+                    "Trade Browse: recorded {} appraisal(s).",
+                    self.dump.len()
+                ));
+            }
+            Err(why) => {
+                self.status = format!("The dump could not be written: {why}");
+            }
+        }
+    }
+
     fn handle_command(&mut self, host: &mut Host<'_>, argument: &str) {
         match argument {
             "show" => {
@@ -506,6 +613,14 @@ impl TradeBrowse {
                 }
             }
             "scan" => self.begin_scan(host, true),
+            "dump" => {
+                self.dump.clear();
+                self.dumping = true;
+                self.begin_scan(host, true);
+                host.chat_post(
+                    "Trade Browse: recording every appraisal. The file lands in the plugin's data folder when the scan drains.",
+                );
+            }
             _ => {
                 let bots = self
                     .inventory
