@@ -31,6 +31,12 @@ pub struct ItemFacts {
     /// The body parts an armour piece covers (the retail CoverageMask
     /// bits the client sends with the object).
     pub coverage_mask: u32,
+    /// The slot names, filled even before the appraisal answers (the
+    /// object record carries `valid_locations`), so the slot and weapon
+    /// filters work on a row the moment it appears.
+    pub slots: Vec<&'static str>,
+    /// The covered areas as the column shows them, same timing.
+    pub covered: String,
     /// Armor level, when it is armour.
     pub armor_level: Option<i32>,
     /// The cantrips on it, by spell id, as the appraisal listed them.

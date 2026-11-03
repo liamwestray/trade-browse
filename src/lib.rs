@@ -215,47 +215,54 @@ impl TradeBrowse {
 
         let mut sighted: BTreeSet<i64> = BTreeSet::new();
         let mut unread = 0usize;
-        let mut queued_now = 0usize;
-        {
-            let Some(inventory) = &mut self.inventory else {
-                return;
+        // Pass one: read every offered object and queue what needs an
+        // appraisal. Facts are computed here (they need &self and host);
+        // the inventory is only touched in pass two, so the two borrows
+        // never overlap.
+        let mut sightings: Vec<(i64, Row)> = Vec::new();
+        for object_id in offered {
+            let Some(object) = host.object(object_id) else {
+                // Not described yet: the server's create packet is still
+                // on its way. It is neither sighted nor unseen.
+                unread += 1;
+                continue;
             };
-            for object_id in offered {
-                let Some(object) = host.object(object_id) else {
-                    // Not described yet: the server's create packet is
-                    // still on its way. It is neither sighted nor unseen.
-                    unread += 1;
-                    continue;
-                };
-                let property = facts::property_id(object.weenie_class_id);
-                sighted.insert(property);
-                let item = ScanItem {
-                    object_id,
-                    property_id: property,
-                };
-                let cached = self.facts.contains_key(&property);
-                if (deep || !cached) && !self.queue.contains(&item) {
-                    self.queue.push(item);
-                    queued_now += 1;
+            let property = facts::property_id(object.weenie_class_id);
+            sighted.insert(property);
+            let item = ScanItem {
+                object_id,
+                property_id: property,
+            };
+            let cached = self.facts.contains_key(&property);
+            if (deep || !cached) && !self.queue.contains(&item) {
+                self.queue.push(item);
+            }
+            // The live guid is what a price click needs, and the object
+            // record carries it whether or not the appraisal has
+            // answered. A row left holding a previous trade's guid (or 0)
+            // would silently refuse to ask.
+            let guid = facts::property_id(object_id);
+            if cached {
+                let mut fresh = Row::from_facts(&self.facts[&property], now);
+                fresh.object_id = guid;
+                sightings.push((property, fresh));
+            } else {
+                // Name, icon, slots and covered areas arrive with the
+                // object record itself, long before the appraisal
+                // answers. Cache them as partial facts so the filters can
+                // read this row now.
+                if let Some(partial) = self.facts_from_object(host, object_id) {
+                    self.facts.insert(property, partial);
                 }
-                // The live guid is what a price click needs, and the
-                // object record carries it whether or not the appraisal
-                // has answered — so both sighting paths stamp it. A row
-                // left holding a previous trade's guid (or 0) would
-                // silently refuse to ask.
-                let guid = facts::property_id(object_id);
-                if cached {
-                    let mut fresh = Row::from_facts(&self.facts[&property], now);
-                    fresh.object_id = guid;
-                    if let Some(existing) = inventory.find(property) {
-                        fresh.price = existing.price.clone();
-                    }
-                    inventory.sight(fresh);
-                } else {
-                    // The name, icon and guid arrive with the object
-                    // record itself, long before the appraisal answers.
-                    inventory.sight(Row::from_sighting(&object, now));
+                sightings.push((property, Row::from_sighting(&object, now)));
+            }
+        }
+        if let Some(inventory) = &mut self.inventory {
+            for (property, mut row) in sightings {
+                if let Some(existing) = inventory.find(property) {
+                    row.price = existing.price.clone();
                 }
+                inventory.sight(row);
             }
             // A read that saw every object may prune what the bot no
             // longer offers; a partial one must not.
@@ -266,7 +273,6 @@ impl TradeBrowse {
             }
         }
         self.save(host);
-        let _ = queued_now;
         self.status = format!(
             "{}: {} item(s) in the window, {} to appraise{}.",
             trade.partner_name,
@@ -280,6 +286,31 @@ impl TradeBrowse {
         );
     }
 
+    /// The facts an object record already carries, before any appraisal:
+    /// name, icon, stack, category, slots and covered areas. The slot and
+    /// weapon filters read these, so a row filters correctly the moment
+    /// it appears rather than only after its appraisal lands.
+    fn facts_from_object(&self, host: &mut Host<'_>, object_id: u32) -> Option<ItemFacts> {
+        let object = host.object(object_id)?;
+        let valid_locations = host.int_property(object_id, VALID_LOCATIONS).unwrap_or(0) as u32;
+        let wield = host.int_property(object_id, WIELD_DIFFICULTY);
+        Some(ItemFacts {
+            property_id: facts::property_id(object.weenie_class_id),
+            name: object.name.clone(),
+            icon_id: object.icon_id,
+            stack_size: u32::try_from(object.stack_size.max(1)).unwrap_or(1),
+            category: facts::category_of(object.item_type, valid_locations),
+            item_type: object.item_type,
+            valid_locations,
+            coverage_mask: object.coverage_mask,
+            slots: facts::slot_names(valid_locations),
+            covered: facts::coverage_names(object.coverage_mask),
+            weapon: facts::weapon_of(valid_locations, wield),
+            item_set: facts::set_of(&object.name).to_owned(),
+            ..Default::default()
+        })
+    }
+
     /// Ask for one appraisal per tick, and take in its answer.
     fn pump_appraisals(&mut self, host: &mut Host<'_>) {
         if let Some(asked) = self.asked {
@@ -289,26 +320,13 @@ impl TradeBrowse {
                 .filter(|object| object.has_appraisal_data);
             if let Some(object) = answered {
                 let property = asked.property_id;
-                let valid_locations = host
-                    .int_property(object.object_id, VALID_LOCATIONS)
-                    .unwrap_or(0) as u32;
-                let wield = host.int_property(object.object_id, WIELD_DIFFICULTY);
-                let mut facts = ItemFacts {
-                    property_id: property,
-                    name: object.name.clone(),
-                    icon_id: object.icon_id,
-                    stack_size: u32::try_from(object.stack_size.max(1)).unwrap_or(1),
-                    category: facts::category_of(object.item_type, valid_locations),
-                    item_type: object.item_type,
-                    valid_locations,
-                    coverage_mask: object.coverage_mask,
-                    armor_level: host.int_property(object.object_id, ARMOR_LEVEL),
-                    crit_rating: host.int_property(object.object_id, CRIT_RATING),
-                    spell_ids: object.spell_ids.clone(),
-                    weapon: facts::weapon_of(valid_locations, wield),
-                    item_set: facts::set_of(&object.name).to_owned(),
-                    ..Default::default()
-                };
+                let mut facts = self
+                    .facts_from_object(host, object.object_id)
+                    .unwrap_or_default();
+                facts.property_id = property;
+                facts.armor_level = host.int_property(object.object_id, ARMOR_LEVEL);
+                facts.crit_rating = host.int_property(object.object_id, CRIT_RATING);
+                facts.spell_ids = object.spell_ids.clone();
                 self.classify_cantrips(&mut facts, host);
                 facts.ratings = facts::ratings_of(&facts);
                 facts.detail = detail_of(&facts);
@@ -415,7 +433,10 @@ impl TradeBrowse {
                     .iter()
                     .filter(|row| match self.facts.get(&row.property_id) {
                         Some(facts) => self.filters.matches(facts),
-                        None => false,
+                        // A row the client has never described cannot be
+                        // judged; hiding it behind a filter would make it
+                        // vanish forever, so it shows until facts arrive.
+                        None => true,
                     })
                     .cloned()
                     .collect(),
@@ -621,7 +642,11 @@ impl TradeBrowse {
             }
             _ => {}
         }
-        if handler.starts_with("Toggle") || matches!(handler, "Select" | "Reset") {
+        // Every filter control names its own handler (`CatWeaponsAction`,
+        // `BandMinorAction`, …); a toggle must redraw the list. The old
+        // shared `Toggle*` names are gone — matching on them here left
+        // every checkbox updating state without ever refreshing.
+        if handler.ends_with("Action") || matches!(handler, "Select" | "Reset") {
             self.refresh(host);
         }
     }
@@ -668,6 +693,31 @@ mod tests {
     /// Start the plugin the way the client does, through the SDK's fake
     /// host, which applies the same verb and panel rules the real one
     /// does. A misspelled verb or a bad binding fails here, not in game.
+    /// A checkbox click must both update the filter state and redraw the
+    /// window. The per-control handler names (`CatWeaponsAction`, …) once
+    /// left the redraw gate matching the old `Toggle*` prefix, so every
+    /// box silently did nothing.
+    #[test]
+    fn a_checkbox_click_updates_the_filter_and_asks_for_a_redraw() {
+        // The state half: the click carries the new value, not a flip.
+        let value = ActionValue::Int(1);
+        assert!(bool_value(&value));
+        let mut filters = filters::FilterState::default();
+        filters.categories = filters.categories.toggled(facts::Category::Armor);
+        assert!(filters.categories.has(facts::Category::Armor));
+        // The redraw half: every per-control handler name ends in
+        // "Action", which is what the gate now matches.
+        for name in [
+            "CatWeaponsAction",
+            "WpnMissileAction",
+            "SlotNecklaceAction",
+            "CanCreatureAction",
+            "UnenchentableAction",
+        ] {
+            assert!(name.ends_with("Action"), "{name} would not redraw the list");
+        }
+    }
+
     #[test]
     fn the_plugin_starts_and_registers_its_window() {
         let mut host = openac_plugin::testing::FakeHost::new("liamwestray.trade-browse");
