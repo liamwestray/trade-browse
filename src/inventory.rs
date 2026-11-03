@@ -15,9 +15,9 @@
 use crate::facts::{Category, ItemFacts};
 
 /// The columns, in file order. `PropertyId` is the row's key.
-pub const HEADER: &str = "PropertyId,Name,Category,ValidLocations,Coverage,\
+pub const HEADER: &str = "PropertyId,Name,Category,Slots,Coverage,\
                           ArmorLevel,CreatureCantrips,ItemCantrips,LifeCantrips,\
-                          ItemSet,Stack,Price,LastSeen";
+                          ItemSet,Stack,Price,LastSeen,IconId,Ratings,Detail";
 
 /// One tracked item of one bot.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -26,9 +26,11 @@ pub struct Row {
     pub property_id: i64,
     pub name: String,
     pub category: Category,
-    /// The valid-location bits, as text so the CSV stays readable.
-    pub valid_locations: String,
-    /// The coverage bits, same.
+    /// The wear slots by name, joined with `; ` — the CSV is a human
+    /// file, and the filters read facts, not this.
+    pub slots: String,
+    /// The valid-location bits as hex, kept for a round-trip back into
+    /// facts if the cache is ever rebuilt.
     pub coverage: String,
     /// Armor level, blank when the item is not armour.
     pub armor_level: String,
@@ -42,6 +44,12 @@ pub struct Row {
     pub stack: u32,
     /// The last price the bot quoted, blank until asked.
     pub price: String,
+    /// The item's icon surface; 0 until the client has described it.
+    pub icon_id: u32,
+    /// What the cantrips do for the buyer: "Heal Boost 1", "Crit Dam Resist 2".
+    pub ratings: String,
+    /// The short appraisal line: "AL 312", a stack count, a wield diff.
+    pub detail: String,
     /// Unix milliseconds of the most recent sighting.
     pub last_seen: i64,
 }
@@ -54,8 +62,8 @@ impl Row {
             property_id: facts.property_id,
             name: facts.name.clone(),
             category: facts.category,
-            valid_locations: bits(facts.valid_locations),
-            coverage: bits(facts.coverage_mask),
+            slots: crate::facts::slot_names(facts.valid_locations).join("; "),
+            coverage: bits(facts.valid_locations),
             armor_level: facts
                 .armor_level
                 .map_or_else(String::new, |level| level.to_string()),
@@ -65,6 +73,9 @@ impl Row {
             item_set: String::new(),
             stack: facts.stack_size.max(1),
             price: String::new(),
+            icon_id: facts.icon_id,
+            ratings: facts.ratings.clone(),
+            detail: facts.detail.clone(),
             last_seen: now,
         }
     }
@@ -106,7 +117,7 @@ impl Inventory {
                 continue;
             }
             let fields = split(line);
-            if fields.len() < 13 {
+            if fields.len() < 16 {
                 continue;
             }
             let Ok(property_id) = fields[0].parse::<i64>() else {
@@ -122,7 +133,7 @@ impl Inventory {
                 property_id,
                 name: fields[1].clone(),
                 category: category_of(&fields[2]),
-                valid_locations: fields[3].clone(),
+                slots: fields[3].clone(),
                 coverage: fields[4].clone(),
                 armor_level: fields[5].clone(),
                 creature_cantrips: fields[6].clone(),
@@ -132,6 +143,9 @@ impl Inventory {
                 stack,
                 price: fields[11].clone(),
                 last_seen,
+                icon_id: fields[13].parse().unwrap_or(0),
+                ratings: fields[14].clone(),
+                detail: fields[15].clone(),
             });
         }
         Self { rows, complete }
@@ -164,7 +178,7 @@ impl Inventory {
             // field the new row left blank (cantrips filled by a later
             // pass, a set named by the scan).
             merge(&mut existing.name, &row.name);
-            merge(&mut existing.valid_locations, &row.valid_locations);
+            merge(&mut existing.slots, &row.slots);
             merge(&mut existing.coverage, &row.coverage);
             merge(&mut existing.armor_level, &row.armor_level);
             merge(&mut existing.creature_cantrips, &row.creature_cantrips);
@@ -172,6 +186,11 @@ impl Inventory {
             merge(&mut existing.life_cantrips, &row.life_cantrips);
             merge(&mut existing.item_set, &row.item_set);
             merge(&mut existing.price, &row.price);
+            merge(&mut existing.ratings, &row.ratings);
+            merge(&mut existing.detail, &row.detail);
+            if row.icon_id != 0 {
+                existing.icon_id = row.icon_id;
+            }
             existing.category = row.category;
         } else {
             self.rows.push(row);
@@ -247,7 +266,7 @@ fn join(row: &Row) -> String {
         row.property_id.to_string(),
         quote(&row.name),
         row.category.label().to_owned(),
-        row.valid_locations.clone(),
+        quote(&row.slots),
         row.coverage.clone(),
         row.armor_level.clone(),
         quote(&row.creature_cantrips),
@@ -257,6 +276,9 @@ fn join(row: &Row) -> String {
         row.stack.to_string(),
         quote(&row.price),
         row.last_seen.to_string(),
+        row.icon_id.to_string(),
+        quote(&row.ratings),
+        quote(&row.detail),
     ]
     .join(",")
 }
@@ -302,8 +324,8 @@ mod tests {
             property_id: id,
             name: name.to_owned(),
             category: Category::Weapons,
-            valid_locations: "0x40000".to_owned(),
-            coverage: String::new(),
+            slots: "Hands".to_owned(),
+            coverage: "0x20".to_owned(),
             armor_level: String::new(),
             creature_cantrips: String::new(),
             item_cantrips: "Inferno's Edge".to_owned(),
@@ -312,6 +334,9 @@ mod tests {
             stack: 1,
             price: String::new(),
             last_seen: seen,
+            icon_id: 0,
+            ratings: String::new(),
+            detail: String::new(),
         }
     }
 

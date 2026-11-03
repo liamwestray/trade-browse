@@ -24,6 +24,7 @@
 #![cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 
 mod facts;
+mod filters;
 mod inventory;
 mod price;
 mod view;
@@ -32,7 +33,10 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use crate::facts::ItemFacts;
 use crate::inventory::{Inventory, Row};
-use crate::view::Rows;
+use crate::view::{
+    BAND_BINDINGS, CANTRIP_BINDINGS, CATEGORY_BINDINGS, Rows, SET_BINDINGS, SLOT_BINDINGS,
+    WEAPON_BINDINGS,
+};
 use openac_plugin::storage::{StoragePlace, StorageRoot};
 use openac_plugin::ui::{ActionValue, Panel, PanelSpec, TypedValue, UiEvent};
 use openac_plugin::{Event, Host, Plugin, StartInfo};
@@ -46,6 +50,10 @@ const BUSY_TICKS: u32 = 4;
 const VALID_LOCATIONS: u32 = 9;
 /// The `ArmorLevel` int property (retail `PropertyInt.ArmorLevel`).
 const ARMOR_LEVEL: u32 = 28;
+/// The `WieldDifficulty` int property (retail `PropertyInt.WieldDifficulty`).
+const WIELD_DIFFICULTY: u32 = 160;
+/// The `CritRating` int property (retail `PropertyInt.CritRating`).
+const CRIT_RATING: u32 = 313;
 
 #[derive(Default)]
 struct TradeBrowse {
@@ -67,6 +75,8 @@ struct TradeBrowse {
     /// The rows currently shown, which the UI's row indexes refer to.
     rows: Rows,
     ticks: u32,
+    /// The filter rows, as the concept draws them.
+    filters: filters::FilterState,
     status: String,
 }
 
@@ -79,7 +89,7 @@ impl Plugin for TradeBrowse {
         let spec = view::BINDINGS.iter().fold(
             // The dock slot reads "TB" rather than the derived "TR".
             PanelSpec::new("main", "Trade Browse", view::MARKUP).icon_text("TB"),
-            |spec, (name, kind)| spec.bind(name, kind.abi()),
+            |spec, (name, kind)| spec.bind_typed(name, kind.abi()),
         );
         self.panel = Some(host.register_panel(&spec)?);
         Ok(())
@@ -188,7 +198,7 @@ impl TradeBrowse {
             // not unseen — it is unread — and says nothing about pruning.
             match host.object(object) {
                 Some(object) => {
-                    sighted.insert(object.weenie_class_id as i32 as i64);
+                    sighted.insert(facts::property_id(object.weenie_class_id));
                 }
                 None => unseen += 1,
             }
@@ -201,13 +211,17 @@ impl TradeBrowse {
                 let Some(object) = host.object(object) else {
                     continue;
                 };
-                let property = object.weenie_class_id as i32 as i64;
+                let property = facts::property_id(object.weenie_class_id);
                 let cached = self.facts.contains_key(&property);
                 if (deep || !cached) && !self.queue.contains(&object.object_id) {
                     self.queue.push_back(object.object_id);
                 }
                 if cached {
-                    inventory.sight(Row::from_facts(&self.facts[&property], now));
+                    let mut fresh = Row::from_facts(&self.facts[&property], now);
+                    if let Some(existing) = inventory.find(property) {
+                        fresh.price = existing.price.clone();
+                    }
+                    inventory.sight(fresh);
                 }
             }
             // A read that saw every object may prune what the bot no
@@ -240,21 +254,29 @@ impl TradeBrowse {
                 .object(asked)
                 .filter(|object| object.has_appraisal_data);
             if let Some(object) = answered {
-                let property = object.weenie_class_id as i32 as i64;
-                let facts = ItemFacts {
+                let property = facts::property_id(object.weenie_class_id);
+                let valid_locations = host
+                    .int_property(object.object_id, VALID_LOCATIONS)
+                    .unwrap_or(0) as u32;
+                let wield = host.int_property(object.object_id, WIELD_DIFFICULTY);
+                let mut facts = ItemFacts {
                     property_id: property,
                     name: object.name.clone(),
                     icon_id: object.icon_id,
                     stack_size: u32::try_from(object.stack_size.max(1)).unwrap_or(1),
-                    category: facts::Category::from_item_type(object.item_type),
+                    category: facts::category_of(object.item_type, valid_locations),
                     item_type: object.item_type,
-                    valid_locations: host
-                        .int_property(object.object_id, VALID_LOCATIONS)
-                        .unwrap_or(0) as u32,
-                    coverage_mask: object.coverage_mask,
+                    valid_locations,
                     armor_level: host.int_property(object.object_id, ARMOR_LEVEL),
+                    crit_rating: host.int_property(object.object_id, CRIT_RATING),
                     spell_ids: object.spell_ids.clone(),
+                    weapon: facts::weapon_of(valid_locations, wield),
+                    item_set: facts::set_of(&object.name).to_owned(),
+                    ..Default::default()
                 };
+                self.classify_cantrips(&mut facts, host);
+                facts.ratings = facts::ratings_of(&facts);
+                facts.detail = detail_of(&facts);
                 self.facts.insert(property, facts.clone());
                 let now = unix_ms(host);
                 if let Some(inventory) = &mut self.inventory {
@@ -282,6 +304,29 @@ impl TradeBrowse {
         }
     }
 
+    /// Sort an item's cantrips into the concept's three school columns,
+    /// each named with its level band: "Recklessness (Legendary)".
+    fn classify_cantrips(&mut self, facts: &mut ItemFacts, host: &mut Host<'_>) {
+        for id in facts.spell_ids.clone() {
+            let Some(spell) = host.spell(id) else {
+                continue;
+            };
+            let cell = format!(
+                "{} ({})",
+                spell.name,
+                facts::Band::of_tier(spell.tier).label()
+            );
+            match spell.school {
+                31 => facts.creature_cantrips.push(cell),
+                32 => facts.item_cantrips.push(cell),
+                33 => facts.life_cantrips.push(cell),
+                // War, void and anything else are not cantrip schools a
+                // buyer filters by; the Detail line still lists them.
+                _ => {}
+            }
+        }
+    }
+
     /// Match a tell from the trading bot to the price we asked for.
     fn hear_tell(&mut self, sender: &str, text: &str) {
         let Some(asked) = self.price_asked else {
@@ -306,6 +351,27 @@ impl TradeBrowse {
         }
     }
 
+    /// The inventory as the filters see it: rows whose facts are cached
+    /// are matched against them; rows without facts pass only when no
+    /// filter is set, so nothing hides behind an unread appraisal.
+    fn filtered(&self, inventory: &Inventory) -> Inventory {
+        if self.filters == filters::FilterState::default() {
+            return inventory.clone();
+        }
+        Inventory {
+            rows: inventory
+                .rows
+                .iter()
+                .filter(|row| match self.facts.get(&row.property_id) {
+                    Some(facts) => self.filters.matches(facts),
+                    None => false,
+                })
+                .cloned()
+                .collect(),
+            complete: inventory.complete,
+        }
+    }
+
     /// Rebuild the rows and push them to the window.
     fn refresh(&mut self, host: &mut Host<'_>) {
         let Some(panel) = self.panel.as_mut() else {
@@ -327,7 +393,6 @@ impl TradeBrowse {
         );
         panel.set("Types", TypedValue::TextList(rows.types.clone()));
         panel.set("Slots", TypedValue::TextList(rows.slots.clone()));
-        panel.set("Coverage", TypedValue::TextList(rows.coverage.clone()));
         panel.set(
             "CreatureCantrips",
             TypedValue::TextList(rows.creature_cantrips.clone()),
@@ -400,19 +465,99 @@ impl TradeBrowse {
             }
             "Scan" => self.begin_scan(host, true),
             "Reset" => {
+                self.filters = filters::FilterState::default();
                 self.status = "Filters reset.".to_owned();
+            }
+            // Every filter control names its own handler, so a click says
+            // exactly which box it toggled. A checkbox arrives as
+            // ActionValue::Int(1|0): the new state, which is what we set.
+            "UnenchentableAction" => {
+                self.filters.unenchentable_only = bool_value(&value);
+            }
+            handler if handler.ends_with("Action") => {
+                let name = handler.trim_end_matches("Action");
+                if let Some(index) = CATEGORY_BINDINGS.iter().position(|b| *b == name) {
+                    let category = view::CATEGORIES[index];
+                    if self.filters.categories.has(category) != bool_value(&value) {
+                        self.filters.categories = self.filters.categories.toggled(category);
+                    }
+                } else if let Some(index) = WEAPON_BINDINGS.iter().position(|b| *b == name) {
+                    if self.filters.weapons.has(index) != bool_value(&value) {
+                        self.filters.weapons = self.filters.weapons.toggled(index);
+                    }
+                } else if let Some(index) = SLOT_BINDINGS.iter().position(|b| *b == name) {
+                    if self.filters.slots.has(index) != bool_value(&value) {
+                        self.filters.slots = self.filters.slots.toggled(index);
+                    }
+                } else if let Some(index) = CANTRIP_BINDINGS.iter().position(|b| *b == name) {
+                    let c = &mut self.filters.cantrips;
+                    match index {
+                        0 => c.creature = bool_value(&value),
+                        1 => c.item = bool_value(&value),
+                        2 => c.life = bool_value(&value),
+                        _ => c.regular_only = bool_value(&value),
+                    }
+                } else if let Some(index) = BAND_BINDINGS.iter().position(|b| *b == name) {
+                    // A band button carries no state: clicking the checked
+                    // band clears it, any other selects it.
+                    use facts::Band;
+                    let chosen = [
+                        Band::Minor,
+                        Band::Moderate,
+                        Band::Major,
+                        Band::Epic,
+                        Band::Legendary,
+                    ][index];
+                    self.filters.bands.checked = if self.filters.bands.checked == Some(chosen) {
+                        None
+                    } else {
+                        Some(chosen)
+                    };
+                } else if let Some(index) = SET_BINDINGS.iter().position(|b| *b == name) {
+                    let sets = &mut self.filters.sets;
+                    match index {
+                        18 => sets.none = !sets.none,
+                        19 => sets.other = !sets.other,
+                        _ => {
+                            let label = view::SET_LABELS[index];
+                            match sets.checked.iter().position(|s| s == label) {
+                                Some(at) => {
+                                    sets.checked.remove(at);
+                                }
+                                None => sets.checked.push(label.to_owned()),
+                            }
+                        }
+                    }
+                }
             }
             _ => {}
         }
-        if matches!(handler, "Select" | "Reset") {
+        if handler.starts_with("Toggle") || matches!(handler, "Select" | "Reset") {
             self.refresh(host);
         }
     }
 }
 
+/// A checkbox's new state, as the wire carries it (`Int(1)` / `Int(0)`).
+fn bool_value(value: &ActionValue) -> bool {
+    matches!(value, ActionValue::Int(1))
+}
+
 /// UTC milliseconds, from the client's clock.
 fn unix_ms(host: &mut Host<'_>) -> i64 {
     host.clock().utc_unix_ms
+}
+
+/// The Detail column: armour shows its level, a stack its count.
+fn detail_of(facts: &ItemFacts) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(level) = facts.armor_level.filter(|l| *l > 0) {
+        parts.push(format!("AL {level}"));
+    }
+    if facts.stack_size > 1 {
+        parts.push(format!("x{}", facts.stack_size));
+    }
+    parts.join(" ")
 }
 
 openac_plugin::export_plugin!(TradeBrowse);
