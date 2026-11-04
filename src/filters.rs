@@ -258,6 +258,7 @@ impl FilterState {
             && self.cantrips.matches(facts)
             && self.bands.matches(facts)
             && self.sets.matches(facts)
+            && (!self.unenchentable_only || is_unenchentable(facts))
     }
 
     /// The concept's "Reset filters": every row empty.
@@ -335,12 +336,20 @@ impl FilterState {
 }
 
 /// Whether an item can carry cantrips: the concept's Regular /
-/// Unenchentable row. An unenchentable item has no cantrips and no room
-/// for them; the client's honest signal is the cantrip list itself, so
-/// the row reads "this item has cantrips" as enchantable.
+/// Whether an item can never carry cantrips: the concept's Regular /
+/// Unenchentable row.
+///
+/// The honest signal is `ItemMaxMana` (retail property 108): a Covenant
+/// piece, a Hollow weapon or a plain robe reports 0, so no cantrip can
+/// ever be added. The old rule read "no cantrips right now" as
+/// unenchentable, which flagged every *un-enchanted* normal item (a bare
+/// Soldier Gauntlets) and missed nothing real — the opposite of the row.
+///
+/// `max_mana` is `None` until the appraisal answers, so an unappraised
+/// row is not claimed either way: it passes only when the row is off.
 #[must_use]
 pub fn is_unenchentable(facts: &ItemFacts) -> bool {
-    facts.spell_ids.is_empty() && facts.category != Category::Other && !facts.name.is_empty()
+    facts.max_mana == Some(0)
 }
 
 #[cfg(test)]
@@ -532,6 +541,32 @@ mod tests {
             ..Default::default()
         };
         assert!(!adept.matches(&rare), "a rare is not Adept");
+    }
+
+    #[test]
+    fn unenchentable_reads_max_mana_not_an_empty_cantrip_list() {
+        // A bare Soldier Gauntlets has room for cantrips (max_mana > 0):
+        // enchantable, even with none on it yet.
+        let enchantable = ItemFacts {
+            max_mana: Some(1000),
+            ..Default::default()
+        };
+        assert!(!is_unenchentable(&enchantable));
+        // A Covenant piece reports 0: unenchentable.
+        let covenant = ItemFacts {
+            max_mana: Some(0),
+            ..Default::default()
+        };
+        assert!(is_unenchentable(&covenant));
+        // Unappraised (None) is not claimed unenchentable.
+        assert!(!is_unenchentable(&ItemFacts::default()));
+        // And the filter row actually applies it.
+        let f = FilterState {
+            unenchentable_only: true,
+            ..Default::default()
+        };
+        assert!(f.matches(&covenant));
+        assert!(!f.matches(&enchantable));
     }
 
     #[test]

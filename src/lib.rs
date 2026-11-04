@@ -66,6 +66,9 @@ const ARMOR_LEVEL: u32 = 28;
 const WIELD_DIFFICULTY: u32 = 160;
 /// The `CritRating` int property (retail `PropertyInt.CritRating`).
 const CRIT_RATING: u32 = 313;
+/// The `ItemMaxMana` int property (retail `PropertyInt.ItemMaxMana`): 0
+/// means the item cannot carry cantrips.
+const ITEM_MAX_MANA: u32 = 108;
 
 #[derive(Default)]
 struct TradeBrowse {
@@ -346,6 +349,7 @@ impl TradeBrowse {
                 facts.property_id = property;
                 facts.armor_level = host.int_property(object.object_id, ARMOR_LEVEL);
                 facts.crit_rating = host.int_property(object.object_id, CRIT_RATING);
+                facts.max_mana = host.int_property(object.object_id, ITEM_MAX_MANA);
                 facts.spell_ids = object.spell_ids.clone();
                 self.classify_cantrips(&mut facts, host);
                 facts.ratings = facts::ratings_of(&facts);

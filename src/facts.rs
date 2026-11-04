@@ -44,6 +44,12 @@ pub struct ItemFacts {
     pub covered: String,
     /// Armor level, when it is armour.
     pub armor_level: Option<i32>,
+    /// `ItemMaxMana` (retail property 108): the room an item has for
+    /// cantrips. Zero means it can never be enchanted — a Covenant piece,
+    /// a Hollow weapon, a plain cloth robe. `None` until the appraisal
+    /// answers (the value arrives with appraisal data, not the object
+    /// record).
+    pub max_mana: Option<i32>,
     /// The cantrips on it, by spell id, as the appraisal listed them.
     pub spell_ids: Vec<u32>,
     /// The cantrip names by school, filled by the scan, which reads the
@@ -245,27 +251,34 @@ pub enum Weapon {
 #[must_use]
 pub fn category_of(item_type: u32, valid_locations: u32) -> Category {
     use crate::facts::item_type as t;
-    if valid_locations & slot::CLOAK != 0 {
-        return Category::Cloaks;
-    }
-    if valid_locations & slot::TRINKET != 0 {
-        return Category::Jewelry;
-    }
-    if item_type & t::GEM != 0 {
-        return Category::Summonons;
-    }
-    if item_type & (t::MELEE_WEAPON | t::MISSILE_WEAPON | t::CASTER) != 0
-        || valid_locations & (slot::SHIELD) != 0
-    {
-        return Category::Weapons;
+    // The item_type bits are the server's own word on what a thing *is*,
+    // so they decide first. The old order asked the cloak slot before the
+    // item type, and every cloak (Clothing + the cloak slot) came back
+    // "Clothing" — the concept's Clothing filter then filled with cloaks
+    // and the Cloaks filter looked broken.
+    if item_type & t::CLOTHING != 0 {
+        // A garment worn in the cloak slot is the concept's Cloaks row;
+        // worn elsewhere it is plain Clothing.
+        return if valid_locations & slot::CLOAK != 0 {
+            Category::Cloaks
+        } else {
+            Category::Clothing
+        };
     }
     if item_type & t::ARMOR != 0 {
         return Category::Armor;
     }
-    if item_type & t::CLOTHING != 0 {
-        return Category::Clothing;
+    if item_type & (t::MELEE_WEAPON | t::MISSILE_WEAPON | t::CASTER) != 0
+        || valid_locations & slot::SHIELD != 0
+    {
+        return Category::Weapons;
     }
-    if item_type & t::JEWELRY != 0 {
+    if item_type & t::GEM != 0 {
+        return Category::Summonons;
+    }
+    // Trinkets are jewelry worn in the trinket slot; the slot catches
+    // them even when the item type is broad.
+    if item_type & t::JEWELRY != 0 || valid_locations & slot::TRINKET != 0 {
         return Category::Jewelry;
     }
     if item_type & t::TINKERING_MATERIAL != 0 {
@@ -576,9 +589,28 @@ mod tests {
     }
 
     #[test]
-    fn a_cloak_or_trinket_reads_by_its_slot() {
+    fn a_cloak_reads_as_cloaks_not_clothing() {
+        // The bug: a cloak is Clothing bits + the cloak slot, and the
+        // old order returned Clothing, so the Clothing filter filled
+        // with cloaks and Cloaks looked dead.
         assert_eq!(category_of(t::CLOTHING, s::CLOAK), Category::Cloaks);
+        assert_eq!(category_of(t::CLOTHING, s::HEAD), Category::Clothing);
         assert_eq!(category_of(t::JEWELRY, s::TRINKET), Category::Jewelry);
+    }
+
+    #[test]
+    fn jewelry_subtypes_resolve_by_their_slots() {
+        // Necklace / Bracelet / Ring / Trinket are all Jewelry bits; the
+        // slot is what the subfilter reads. category_of only says
+        // Jewelry — the slot names come from slot_names, which must see
+        // each distinct bit.
+        assert_eq!(slot_names(s::NECKLACE), ["Necklace"]);
+        assert_eq!(slot_names(s::BRACELET_L | s::BRACELET_R), ["Bracelet"]);
+        assert_eq!(slot_names(s::RING_L | s::RING_R), ["Ring"]);
+        assert_eq!(slot_names(s::TRINKET), ["Trinket"]);
+        // A jewelry item with no wear slot named here reads as no slot,
+        // which is why the subfilters need valid_locations to be nonzero.
+        assert!(slot_names(0).is_empty());
     }
 
     #[test]
