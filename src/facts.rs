@@ -426,38 +426,84 @@ pub enum SetKind {
     None,
     /// One of the concept's checkbox sets (Soldier … Dedication).
     Checkbox,
-    /// A named set the checkbox row does not list — the rares (Heroic
-    /// Protector, Brogard's Defiance) and anything else the server names
-    /// that we still show and filter under "Other set".
+    /// A named set the checkbox row does not list — the rares from the
+    /// Item Sets page (Heroic Protector, Relic Alduressa, the Aetheria
+    /// surges, the Sigils). Shown and filtered under "Other set".
     Rare,
-    /// A level-bonus item: "Impenetrability VI", "Armor Self VI" — the
-    /// roman numeral is the level, and the set bonus scales with it.
-    Levelled,
 }
 
-/// Rare named sets: not checkbox sets, but what collectors shop for.
-/// Matched as leading words, longest first, exactly like the checkbox
-/// list. Extend freely — an unlisted named set still reads as Rare via
-/// the levelled pattern or the checkbox pass.
+/// Named sets beyond the concept's 18 checkboxes — the "rare" sets from
+/// <https://asheron.fandom.com/wiki/Item_Sets>. These are *item sets* (a
+/// group of pieces that cast bonus spells together), not armour styles:
+/// Alduressa, Yoroi, Tenassa, Celdon and friends are armour *types* and
+/// are deliberately absent. Matched as leading words, longest first.
+///
+/// The set's own title is the prefix its pieces carry: "Heroic
+/// Protector Bracers", "Relic Alduressa Gauntlets", "Clouded Spirit
+/// Greave".
 pub const RARE_SETS: &[&str] = &[
-    // Alduressa, Amuli and the other Olthoi-made armour are the classic
-    // rare sets; the server names them with no roman numeral, so they
-    // must be listed to read as Rare rather than fall through to None.
-    "Alduressa",
-    "Amuli",
-    "Gromnie",
-    "Elysa's",
+    "Ancient Relic",
+    "Upgraded Ancient Relic",
+    "Noble Relic",
+    "Relic Alduressa",
+    "Arm, Mind, Heart",
+    "Carraida's Benediction",
+    "Ceremonial Clothing",
+    "Gladiatorial Clothing",
+    "Protective Clothing",
+    "Gauntlet Garb",
+    "Shou-jen",
+    "Shimmering Shadows",
+    "Leggings of Perfect Light",
+    "Blue Society Band",
+    "Empyrean Rings",
+    "Sigil of Defense",
+    "Sigil of Destruction",
+    "Sigil of Fury",
+    "Sigil of Growth",
+    "Sigil of Vigor",
     "Heroic Protector",
     "Heroic Destroyer",
-    "Brogard's Defiance",
-    "Olthoi's Bane",
-    "Inferno's Bane",
-    "Gelidite's Bane",
-    "Swordsman's Bane",
-    "Tusker's Bane",
-    "Archer's Bane",
-    "Astyrrian's Bane",
-    "Nu Mhua's Bane",
+    // Aetheria surges: the four "elemental" families, each in Sparking
+    // (flame), Smoldering, Shivering and Stinging, in Minor/Major and
+    // Blackfire grades. They share the Clouded Spirit / Darkened Mind /
+    // Shrouded Soul bodies.
+    "Blackfire Sparking Clouded Spirit",
+    "Blackfire Sparking Darkened Mind",
+    "Blackfire Sparking Shrouded Soul",
+    "Blackfire Smoldering Clouded Spirit",
+    "Blackfire Smoldering Darkened Mind",
+    "Blackfire Smoldering Shrouded Soul",
+    "Blackfire Shivering Clouded Spirit",
+    "Blackfire Shivering Darkened Mind",
+    "Blackfire Shivering Shrouded Soul",
+    "Blackfire Stinging Clouded Spirit",
+    "Blackfire Stinging Darkened Mind",
+    "Blackfire Stinging Shrouded Soul",
+    "Major Sparking Clouded Spirit",
+    "Major Sparking Darkened Mind",
+    "Major Sparking Shrouded Soul",
+    "Major Smoldering Clouded Spirit",
+    "Major Smoldering Darkened Mind",
+    "Major Smoldering Shrouded Soul",
+    "Major Shivering Clouded Spirit",
+    "Major Shivering Darkened Mind",
+    "Major Shivering Shrouded Soul",
+    "Major Stinging Clouded Spirit",
+    "Major Stinging Darkened Mind",
+    "Major Stinging Shrouded Soul",
+    "Sparking Clouded Spirit",
+    "Sparking Darkened Mind",
+    "Sparking Shrouded Soul",
+    "Smoldering Clouded Spirit",
+    "Smoldering Darkened Mind",
+    "Smoldering Shrouded Soul",
+    "Shivering Clouded Spirit",
+    "Shivering Darkened Mind",
+    "Shivering Shrouded Soul",
+    "Stinging Clouded Spirit",
+    "Stinging Darkened Mind",
+    "Stinging Shrouded Soul",
 ];
 
 /// The concept's set row, in its order.
@@ -491,41 +537,31 @@ pub const SET_NAMES: [&str; 18] = [
 /// Proof Greaves" is. The longest name wins so a two-word set ("Flame
 /// Proof") is not shadowed by a shorter prefix.
 #[must_use]
-pub fn set_of(name: &str) -> (&'static str, SetKind) {
+pub fn set_of(name: &str) -> &'static str {
     let lower = name.to_lowercase();
-    // Longest leading *word* match wins, so "Flame Proof" is not shadowed
-    // by a shorter prefix and "Heroic Protector" beats nothing.
-    let mut best: Option<(&str, SetKind)> = None;
-    for (list, kind) in [
-        (SET_NAMES.as_slice(), SetKind::Checkbox),
-        (RARE_SETS, SetKind::Rare),
-    ] {
-        for set in list {
-            let head = set.to_lowercase();
-            let longer = best.is_none_or(|(b, _)| set.chars().count() > b.chars().count());
-            if let Some(rest) = lower.strip_prefix(&head)
-                && (rest.is_empty() || rest.starts_with(' '))
-                && longer
-            {
-                best = Some((set, kind));
-            }
+    // Longest leading *word* match wins, so "Relic Alduressa" is not
+    // shadowed by "Alduressa" and "Heroic Protector" beats nothing. A
+    // set must be followed by a space or end the name: "Soldier
+    // Gauntlets" is Soldier, "Soldierfish Scale" is not.
+    let mut best: Option<&str> = None;
+    for set in SET_NAMES.iter().chain(RARE_SETS.iter()) {
+        let head = set.to_lowercase();
+        let longer = best.is_none_or(|b: &str| set.chars().count() > b.chars().count());
+        if let Some(rest) = lower.strip_prefix(&head)
+            && (rest.is_empty() || rest.starts_with(' '))
+            && longer
+        {
+            best = Some(set);
         }
     }
-    if let Some(found) = best {
-        return found;
-    }
-    // A trailing roman numeral is a levelled set item: "Impenetrability
-    // VI", "Armor Self VI", "Bludgeon Bane VI". The name is the set; the
-    // numeral is the level its bonus scales with.
-    if let Some((head, tail)) = lower.rsplit_once(' ')
-        && is_roman(tail)
-        && head.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
-    {
-        // The matched name is borrowed from the input, so it cannot be
-        // &'static; the caller stores it as String via set_pair.
-        return ("", SetKind::Levelled);
-    }
-    ("", SetKind::None)
+    best.unwrap_or("")
+}
+
+/// Whether a name is one of the concept's 18 checkbox sets (as opposed
+/// to a rare set).
+#[must_use]
+pub fn is_checkbox_set(set: &str) -> bool {
+    SET_NAMES.contains(&set)
 }
 
 /// Whether a lowercase word is a roman numeral (a levelled item's level).
@@ -535,20 +571,21 @@ fn is_roman(word: &str) -> bool {
         && word.chars().any(|c| c == 'i' || c == 'v' || c == 'x')
 }
 
-/// The set name and kind for an item, owning the name so a levelled
-/// item's set (its title minus the numeral) can be returned as String.
+/// The set name and kind for an item. The name is the matched set title
+/// (a `&'static str` copied into a String); the kind says whether it is
+/// one of the checkbox sets or a rare.
 #[must_use]
 pub fn set_pair(name: &str) -> (String, SetKind) {
-    let (found, kind) = set_of(name);
-    if !found.is_empty() {
-        return (found.to_owned(), kind);
+    let found = set_of(name);
+    if found.is_empty() {
+        return (String::new(), SetKind::None);
     }
-    if kind == SetKind::Levelled
-        && let Some((head, _)) = name.rsplit_once(' ')
-    {
-        return (head.to_owned(), SetKind::Levelled);
-    }
-    (String::new(), SetKind::None)
+    let kind = if is_checkbox_set(found) {
+        SetKind::Checkbox
+    } else {
+        SetKind::Rare
+    };
+    (found.to_owned(), kind)
 }
 
 #[cfg(test)]
@@ -682,50 +719,31 @@ mod tests {
     }
 
     #[test]
-    fn rare_named_sets_read_as_rare() {
+    fn the_named_rare_sets_read_as_rare() {
+        // From the Item Sets page: the Heroic sets, the Sigils, the
+        // graded Aetheria surge families.
         assert_eq!(
-            set_pair("Heroic Protector Gauntlets"),
+            set_pair("Heroic Protector Bracers"),
             ("Heroic Protector".to_owned(), SetKind::Rare)
         );
         assert_eq!(
-            set_pair("Brogard's Defiance"),
-            ("Brogard's Defiance".to_owned(), SetKind::Rare)
+            set_pair("Sigil of Vigor"),
+            ("Sigil of Vigor".to_owned(), SetKind::Rare)
         );
-        // "Heroic Protector" must win over a shorter prefix.
         assert_eq!(
-            set_pair("Heroic Destroyer Breastplate"),
-            ("Heroic Destroyer".to_owned(), SetKind::Rare)
+            set_pair("Clouded Spirit Greave").1,
+            SetKind::None,
+            "the bare surge body is not a set title; the graded names are"
         );
-    }
-
-    #[test]
-    fn a_rare_named_set_from_the_saved_data_reads_as_rare() {
-        // Real names from the bot CSVs: Olthoi armour, no numeral.
         assert_eq!(
-            set_pair("Alduressa Boots"),
-            ("Alduressa".to_owned(), SetKind::Rare)
+            set_pair("Major Sparking Clouded Spirit Girth"),
+            ("Major Sparking Clouded Spirit".to_owned(), SetKind::Rare)
         );
-        assert_eq!(set_pair("Amuli Coat"), ("Amuli".to_owned(), SetKind::Rare));
     }
 
     #[test]
-    fn a_roman_numeral_marks_a_levelled_set_item() {
-        // "Impenetrability VI" is the levelled set item: the name is the
-        // set, the numeral the level its bonus scales with.
-        let (name, kind) = set_pair("Impenetrability VI");
-        assert_eq!(kind, SetKind::Levelled);
-        assert_eq!(name, "Impenetrability");
-        let (name, kind) = set_pair("Armor Self VI");
-        assert_eq!(kind, SetKind::Levelled);
-        assert_eq!(name, "Armor Self");
-        // A plain item with no numeral is not levelled.
-        assert_eq!(set_pair("Dagger").1, SetKind::None);
-    }
-
-    #[test]
-    fn a_checkbox_set_beats_the_levelled_pattern() {
-        // "Soldier Gauntlets" has no numeral anyway, but a set name that
-        // also ends in a word must not be misread as levelled.
+    fn a_checkbox_set_reads_as_checkbox_not_rare() {
         assert_eq!(set_pair("Soldier Gauntlets").1, SetKind::Checkbox);
+        assert_eq!(set_pair("Dextrous Gauntlets").1, SetKind::Checkbox);
     }
 }
