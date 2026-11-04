@@ -484,12 +484,12 @@ pub fn set_of(name: &str) -> (&'static str, SetKind) {
     ] {
         for set in list {
             let head = set.to_lowercase();
-            if let Some(rest) = lower.strip_prefix(&head) {
-                if (rest.is_empty() || rest.starts_with(' '))
-                    && best.map_or(true, |(b, _)| set.chars().count() > b.chars().count())
-                {
-                    best = Some((set, kind));
-                }
+            let longer = best.is_none_or(|(b, _)| set.chars().count() > b.chars().count());
+            if let Some(rest) = lower.strip_prefix(&head)
+                && (rest.is_empty() || rest.starts_with(' '))
+                && longer
+            {
+                best = Some((set, kind));
             }
         }
     }
@@ -499,12 +499,13 @@ pub fn set_of(name: &str) -> (&'static str, SetKind) {
     // A trailing roman numeral is a levelled set item: "Impenetrability
     // VI", "Armor Self VI", "Bludgeon Bane VI". The name is the set; the
     // numeral is the level its bonus scales with.
-    if let Some((head, tail)) = lower.rsplit_once(' ') {
-        if is_roman(tail) && head.chars().next().is_some_and(|c| c.is_ascii_alphabetic()) {
-            // The matched name is borrowed from the input, so it cannot
-            // be &'static; the caller stores it as String via set_pair.
-            return ("", SetKind::Levelled);
-        }
+    if let Some((head, tail)) = lower.rsplit_once(' ')
+        && is_roman(tail)
+        && head.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
+    {
+        // The matched name is borrowed from the input, so it cannot be
+        // &'static; the caller stores it as String via set_pair.
+        return ("", SetKind::Levelled);
     }
     ("", SetKind::None)
 }
@@ -524,10 +525,10 @@ pub fn set_pair(name: &str) -> (String, SetKind) {
     if !found.is_empty() {
         return (found.to_owned(), kind);
     }
-    if kind == SetKind::Levelled {
-        if let Some((head, _)) = name.rsplit_once(' ') {
-            return (head.to_owned(), SetKind::Levelled);
-        }
+    if kind == SetKind::Levelled
+        && let Some((head, _)) = name.rsplit_once(' ')
+    {
+        return (head.to_owned(), SetKind::Levelled);
     }
     (String::new(), SetKind::None)
 }
