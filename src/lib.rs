@@ -350,11 +350,9 @@ impl TradeBrowse {
                 self.classify_cantrips(&mut facts, host);
                 facts.ratings = facts::ratings_of(&facts);
                 facts.detail = detail_of(&facts);
-                // The appraisal's object is live right now: remember its
-                // guid with the facts so filters and price clicks read
-                // the same number.
-                let mut facts = facts;
-                facts.object_guid = facts::property_id(object.object_id);
+                // The appraisal's object is live right now: facts_from_object
+                // already stamped its guid, so filters and price clicks
+                // read the same number.
                 self.facts.insert(property, facts.clone());
                 if self.dumping {
                     let line = self.dump_line(host, object.object_id, &facts);
