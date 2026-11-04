@@ -584,6 +584,19 @@ impl TradeBrowse {
         fields.join(",")
     }
 
+    /// Clicking a row does both things the concept asks for: it brings
+    /// up the client's inspection window for the item, and asks the bot
+    /// its price. The inspection is the client's own — the plugin cannot
+    /// open it directly (no inspect window in `ClientWindowRequest`), so
+    /// it types the retail `/inspectitem <guid>` slash command, which
+    /// the client runs exactly as if the player had.
+    fn inspect_and_price(&mut self, host: &mut Host<'_>, property: i64, guid: i64) {
+        host.chat_submit(&format!("/inspectitem {guid}"));
+        host.chat_submit(&price::query(&price::DEFAULT, &self.bot, guid));
+        self.price_asked = Some((guid, property));
+        self.status = format!("Inspecting {guid}; asked {} for its price…", self.bot);
+    }
+
     /// Write the recorded dump and stop recording.
     fn finish_dump(&mut self, host: &mut Host<'_>) {
         self.dumping = false;
@@ -693,9 +706,7 @@ impl TradeBrowse {
                     let guid = live.or((cached != 0).then_some(cached));
                     match guid {
                         Some(guid) => {
-                            host.chat_submit(&price::query(&price::DEFAULT, &self.bot, guid));
-                            self.price_asked = Some((guid, property));
-                            self.status = format!("Asked {} for {guid}…", self.bot);
+                            self.inspect_and_price(host, property, guid);
                         }
                         // No live item and no remembered guid: ask the
                         // bot for the property id anyway — some bots
