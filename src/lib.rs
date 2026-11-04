@@ -316,7 +316,8 @@ impl TradeBrowse {
             slots: facts::slot_names(valid_locations),
             covered: facts::coverage_names(object.coverage_mask),
             weapon: facts::weapon_of(valid_locations, wield),
-            item_set: facts::set_of(&object.name).to_owned(),
+            item_set: facts::set_pair(&object.name).0,
+            set_kind: facts::set_pair(&object.name).1,
             ..Default::default()
         })
     }

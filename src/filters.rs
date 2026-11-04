@@ -509,6 +509,32 @@ mod tests {
     }
 
     #[test]
+    fn a_rare_or_levelled_set_filters_under_other_set() {
+        // Heroic Protector and "Impenetrability VI" are not checkbox
+        // sets; they must pass "Other set" and fail a checkbox set.
+        let rare = ItemFacts {
+            item_set: "Heroic Protector".to_owned(),
+            ..Default::default()
+        };
+        let other = FilterState {
+            sets: Sets {
+                other: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(other.matches(&rare), "a rare set is an other-set item");
+        let adept = FilterState {
+            sets: Sets {
+                checked: vec!["Adept".to_owned()],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(!adept.matches(&rare), "a rare is not Adept");
+    }
+
+    #[test]
     fn the_summary_names_what_is_checked() {
         let f = FilterState {
             categories: Categories::default().toggled(Category::Armor),

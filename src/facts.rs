@@ -49,6 +49,9 @@ pub struct ItemFacts {
     /// The item set named in its title ("Adept Gauntlets" → Adept), or
     /// empty.
     pub item_set: String,
+    /// What kind of set match this is, so the UI can say "rare" beside a
+    /// name the checkbox row does not list.
+    pub set_kind: SetKind,
     /// The weapon family, for the Missile/Heavy/Finesse/Light/Shield row.
     pub weapon: Weapon,
     /// Armor level and crit rating, as the Detail column reads them.
@@ -397,6 +400,48 @@ impl Band {
     }
 }
 
+/// How an item's set name was recognised.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SetKind {
+    /// No set in the name.
+    #[default]
+    None,
+    /// One of the concept's checkbox sets (Soldier … Dedication).
+    Checkbox,
+    /// A named set the checkbox row does not list — the rares (Heroic
+    /// Protector, Brogard's Defiance) and anything else the server names
+    /// that we still show and filter under "Other set".
+    Rare,
+    /// A level-bonus item: "Impenetrability VI", "Armor Self VI" — the
+    /// roman numeral is the level, and the set bonus scales with it.
+    Levelled,
+}
+
+/// Rare named sets: not checkbox sets, but what collectors shop for.
+/// Matched as leading words, longest first, exactly like the checkbox
+/// list. Extend freely — an unlisted named set still reads as Rare via
+/// the levelled pattern or the checkbox pass.
+pub const RARE_SETS: &[&str] = &[
+    // Alduressa, Amuli and the other Olthoi-made armour are the classic
+    // rare sets; the server names them with no roman numeral, so they
+    // must be listed to read as Rare rather than fall through to None.
+    "Alduressa",
+    "Amuli",
+    "Gromnie",
+    "Elysa's",
+    "Heroic Protector",
+    "Heroic Destroyer",
+    "Brogard's Defiance",
+    "Olthoi's Bane",
+    "Inferno's Bane",
+    "Gelidite's Bane",
+    "Swordsman's Bane",
+    "Tusker's Bane",
+    "Archer's Bane",
+    "Astyrrian's Bane",
+    "Nu Mhua's Bane",
+];
+
 /// The concept's set row, in its order.
 pub const SET_NAMES: [&str; 18] = [
     "Soldier",
@@ -428,22 +473,63 @@ pub const SET_NAMES: [&str; 18] = [
 /// Proof Greaves" is. The longest name wins so a two-word set ("Flame
 /// Proof") is not shadowed by a shorter prefix.
 #[must_use]
-pub fn set_of(name: &str) -> &'static str {
+pub fn set_of(name: &str) -> (&'static str, SetKind) {
     let lower = name.to_lowercase();
-    SET_NAMES
-        .iter()
-        .filter(|set| {
+    // Longest leading *word* match wins, so "Flame Proof" is not shadowed
+    // by a shorter prefix and "Heroic Protector" beats nothing.
+    let mut best: Option<(&str, SetKind)> = None;
+    for (list, kind) in [
+        (SET_NAMES.as_slice(), SetKind::Checkbox),
+        (RARE_SETS, SetKind::Rare),
+    ] {
+        for set in list {
             let head = set.to_lowercase();
-            match lower.strip_prefix(&head) {
-                // The whole name is the set ("Soldier"), or a space
-                // follows it ("Soldier Gauntlets").
-                Some(rest) => rest.is_empty() || rest.starts_with(' '),
-                None => false,
+            if let Some(rest) = lower.strip_prefix(&head) {
+                if (rest.is_empty() || rest.starts_with(' '))
+                    && best.map_or(true, |(b, _)| set.chars().count() > b.chars().count())
+                {
+                    best = Some((set, kind));
+                }
             }
-        })
-        .max_by_key(|set| set.chars().count())
-        .copied()
-        .unwrap_or("")
+        }
+    }
+    if let Some(found) = best {
+        return found;
+    }
+    // A trailing roman numeral is a levelled set item: "Impenetrability
+    // VI", "Armor Self VI", "Bludgeon Bane VI". The name is the set; the
+    // numeral is the level its bonus scales with.
+    if let Some((head, tail)) = lower.rsplit_once(' ') {
+        if is_roman(tail) && head.chars().next().is_some_and(|c| c.is_ascii_alphabetic()) {
+            // The matched name is borrowed from the input, so it cannot
+            // be &'static; the caller stores it as String via set_pair.
+            return ("", SetKind::Levelled);
+        }
+    }
+    ("", SetKind::None)
+}
+
+/// Whether a lowercase word is a roman numeral (a levelled item's level).
+fn is_roman(word: &str) -> bool {
+    !word.is_empty()
+        && word.chars().all(|c| matches!(c, 'i' | 'v' | 'x'))
+        && word.chars().any(|c| c == 'i' || c == 'v' || c == 'x')
+}
+
+/// The set name and kind for an item, owning the name so a levelled
+/// item's set (its title minus the numeral) can be returned as String.
+#[must_use]
+pub fn set_pair(name: &str) -> (String, SetKind) {
+    let (found, kind) = set_of(name);
+    if !found.is_empty() {
+        return (found.to_owned(), kind);
+    }
+    if kind == SetKind::Levelled {
+        if let Some((head, _)) = name.rsplit_once(' ') {
+            return (head.to_owned(), SetKind::Levelled);
+        }
+    }
+    (String::new(), SetKind::None)
 }
 
 #[cfg(test)]
@@ -527,20 +613,81 @@ mod tests {
 
     #[test]
     fn sets_read_their_name_from_the_title() {
-        assert_eq!(set_of("Adept Gauntlets"), "Adept");
-        assert_eq!(set_of("Soldier Bow"), "Soldier");
-        assert_eq!(set_of("Flame Proof Brogues"), "Flame Proof");
-        assert_eq!(set_of("Dagger"), "");
+        assert_eq!(
+            set_pair("Adept Gauntlets"),
+            ("Adept".to_owned(), SetKind::Checkbox)
+        );
+        assert_eq!(
+            set_pair("Soldier Bow"),
+            ("Soldier".to_owned(), SetKind::Checkbox)
+        );
+        assert_eq!(
+            set_pair("Flame Proof Brogues"),
+            ("Flame Proof".to_owned(), SetKind::Checkbox)
+        );
+        assert_eq!(set_pair("Dagger"), (String::new(), SetKind::None));
     }
 
     #[test]
     fn an_item_that_merely_starts_like_a_set_is_not_one() {
-        // The bug the prefix match shipped: "Acid Greataxe" begins with
-        // "Acid" but belongs to no set; only "Acid Proof <slot>" does.
-        assert_eq!(set_of("Acid Greataxe"), "");
-        assert_eq!(set_of("Acid Proof Greaves"), "Acid Proof");
-        assert_eq!(set_of("Acid Thigh Bar"), "");
-        assert_eq!(set_of("Soldierfish Scale"), "", "a word, not a prefix");
-        assert_eq!(set_of("Dextrous Wings"), "Dextrous");
+        // "Acid Greataxe" begins with "Acid" but belongs to no set; only
+        // "Acid Proof <slot>" does.
+        assert_eq!(set_pair("Acid Greataxe"), (String::new(), SetKind::None));
+        assert_eq!(
+            set_pair("Acid Proof Greaves"),
+            ("Acid Proof".to_owned(), SetKind::Checkbox)
+        );
+        assert_eq!(
+            set_pair("Soldierfish Scale"),
+            (String::new(), SetKind::None)
+        );
+    }
+
+    #[test]
+    fn rare_named_sets_read_as_rare() {
+        assert_eq!(
+            set_pair("Heroic Protector Gauntlets"),
+            ("Heroic Protector".to_owned(), SetKind::Rare)
+        );
+        assert_eq!(
+            set_pair("Brogard's Defiance"),
+            ("Brogard's Defiance".to_owned(), SetKind::Rare)
+        );
+        // "Heroic Protector" must win over a shorter prefix.
+        assert_eq!(
+            set_pair("Heroic Destroyer Breastplate"),
+            ("Heroic Destroyer".to_owned(), SetKind::Rare)
+        );
+    }
+
+    #[test]
+    fn a_rare_named_set_from_the_saved_data_reads_as_rare() {
+        // Real names from the bot CSVs: Olthoi armour, no numeral.
+        assert_eq!(
+            set_pair("Alduressa Boots"),
+            ("Alduressa".to_owned(), SetKind::Rare)
+        );
+        assert_eq!(set_pair("Amuli Coat"), ("Amuli".to_owned(), SetKind::Rare));
+    }
+
+    #[test]
+    fn a_roman_numeral_marks_a_levelled_set_item() {
+        // "Impenetrability VI" is the levelled set item: the name is the
+        // set, the numeral the level its bonus scales with.
+        let (name, kind) = set_pair("Impenetrability VI");
+        assert_eq!(kind, SetKind::Levelled);
+        assert_eq!(name, "Impenetrability");
+        let (name, kind) = set_pair("Armor Self VI");
+        assert_eq!(kind, SetKind::Levelled);
+        assert_eq!(name, "Armor Self");
+        // A plain item with no numeral is not levelled.
+        assert_eq!(set_pair("Dagger").1, SetKind::None);
+    }
+
+    #[test]
+    fn a_checkbox_set_beats_the_levelled_pattern() {
+        // "Soldier Gauntlets" has no numeral anyway, but a set name that
+        // also ends in a word must not be misread as levelled.
+        assert_eq!(set_pair("Soldier Gauntlets").1, SetKind::Checkbox);
     }
 }
