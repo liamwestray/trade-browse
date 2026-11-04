@@ -16,6 +16,11 @@
 pub struct ItemFacts {
     /// The property id, signed as the bots spell it: -20601.
     pub property_id: i64,
+    /// The object guid this item was last seen under, signed as the bots
+    /// spell it. It dies when the trade window closes; the scan stamps it
+    /// on every sighting so a price click always has the live number.
+    /// 0 means "never seen in an open window".
+    pub object_guid: i64,
     /// Its name, as the server spells it.
     pub name: String,
     /// Its icon's render surface; 0 until the client has described it.

@@ -249,6 +249,14 @@ impl TradeBrowse {
             // would silently refuse to ask.
             let guid = facts::property_id(object_id);
             if cached {
+                // The facts map is the filter's source of truth, so the
+                // live guid lands there too — otherwise a row that was
+                // appraised in an earlier trade keeps a dead guid and
+                // the click falls back to the property id, which most
+                // bots cannot price.
+                if let Some(known) = self.facts.get_mut(&property) {
+                    known.object_guid = guid;
+                }
                 let mut fresh = Row::from_facts(&self.facts[&property], now);
                 fresh.object_id = guid;
                 sightings.push((property, fresh));
@@ -306,6 +314,7 @@ impl TradeBrowse {
         let wield = host.int_property(object_id, WIELD_DIFFICULTY);
         Some(ItemFacts {
             property_id: facts::property_id(object.weenie_class_id),
+            object_guid: facts::property_id(object_id),
             name: object.name.clone(),
             icon_id: object.icon_id,
             stack_size: u32::try_from(object.stack_size.max(1)).unwrap_or(1),
@@ -341,6 +350,11 @@ impl TradeBrowse {
                 self.classify_cantrips(&mut facts, host);
                 facts.ratings = facts::ratings_of(&facts);
                 facts.detail = detail_of(&facts);
+                // The appraisal's object is live right now: remember its
+                // guid with the facts so filters and price clicks read
+                // the same number.
+                let mut facts = facts;
+                facts.object_guid = facts::property_id(object.object_id);
                 self.facts.insert(property, facts.clone());
                 if self.dumping {
                     let line = self.dump_line(host, object.object_id, &facts);
@@ -698,10 +712,16 @@ impl TradeBrowse {
                         })
                         .map(|id| facts::property_id(*id));
                     let cached = self
-                        .inventory
-                        .as_ref()
-                        .and_then(|inventory| inventory.find(property))
-                        .map(|row| row.object_id)
+                        .facts
+                        .get(&property)
+                        .map(|facts| facts.object_guid)
+                        .filter(|guid| *guid != 0)
+                        .or_else(|| {
+                            self.inventory
+                                .as_ref()
+                                .and_then(|inventory| inventory.find(property))
+                                .map(|row| row.object_id)
+                        })
                         .unwrap_or(0);
                     let guid = live.or((cached != 0).then_some(cached));
                     match guid {
